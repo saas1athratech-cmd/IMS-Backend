@@ -1,0 +1,39 @@
+const { DataTypes } = require("sequelize");
+const sequelize = require("../../config/sqlcon");
+
+const Notification = sequelize.define(
+  "Notification",
+  {
+    user_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false
+    },
+
+    title: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+
+    message: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+
+    type: {
+      type: DataTypes.STRING,
+      defaultValue: "general"
+    },
+
+    is_read: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    }
+  },
+  {
+    tableName: "notifications",
+    underscored: true,
+    timestamps: true
+  }
+);
+
+module.exports = Notification;
