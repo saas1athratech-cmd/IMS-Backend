@@ -1,9 +1,11 @@
 const { QueryTypes, Op } = require("sequelize");
+const XLSX = require("xlsx");
 const sequelize = require("../../../config/sqlcon");
 const Stock = require("../../../model/SQL_Model/stock.record")
 const { Branch, Ledger} = require("../../../model/SQL_Model");
 const { ClientLedger, Client } = require("../../../model/SQL_Model");
 
+// const Stock = require("../../../model/SQL_Model/stock.record");
 // ============================
 // INVENTORY DASHBOARD
 // ============================
@@ -217,6 +219,91 @@ exports.addStockItem = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+
+
+
+
+exports.bulkUploadStock = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    let data = [];
+
+    // ✅ Excel Upload
+    if (req.file) {
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      data = XLSX.utils.sheet_to_json(sheet);
+    }
+
+    // ✅ JSON Upload
+    if (req.body.data) {
+      data = JSON.parse(req.body.data);
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ message: "No data found in file" });
+    }
+
+    // ✅ CLEAN + VALIDATE DATA
+    const formattedData = data
+      .map((row, index) => {
+        const quantity = Number(row.quantity);
+        const rate = Number(row.rate);
+
+        // ❌ Skip invalid rows
+        if (!row.item || isNaN(quantity) || isNaN(rate)) {
+          return null;
+        }
+
+        return {
+          item: row.item.trim(),
+          category: row.category || null,
+          hsn: row.hsn || null,
+          grn: row.grn || null,
+          purchaseOrder: row.po_number || row.purchaseOrder || null,
+          quantity,
+          rate,
+          value: quantity * rate,
+
+          // 🔥 AUTO SET (IMPORTANT)
+          branch_id: req.user.branch_id,
+          owner_id: req.user.id,
+        };
+      })
+      .filter(Boolean); // remove null rows
+
+    if (formattedData.length === 0) {
+      return res.status(400).json({
+        message: "All rows are invalid. Check your Excel format.",
+      });
+    }
+
+    // ✅ BULK INSERT WITH TRANSACTION
+    const inserted = await Stock.bulkCreate(formattedData, {
+      transaction,
+    });
+
+    await transaction.commit();
+
+    res.status(201).json({
+      success: true,
+      message: "Stock uploaded successfully",
+      count: inserted.length,
+      data: inserted,
+    });
+  } catch (err) {
+    await transaction.rollback();
+
+    console.error("Bulk Upload Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Bulk upload failed",
       error: err.message,
     });
   }

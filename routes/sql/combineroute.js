@@ -17,12 +17,12 @@ const {
   getReportsAnalyticsDashboard,
   getCompleteDashboard,
   addStockItem,
-  getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch
+  getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock
 } = require("../../controllers/sqlbase/combine/combinemanager");
 
 const auth = require("../../middleware/auth");
 const checkRole = require("../../middleware/role");
-
+const { upload } = require("../../middleware/upload"); 
 
 // =====================================
 // MAIN DASHBOARD
@@ -155,6 +155,13 @@ router.get(
   auth,
   checkRole(["stock_manager","inventory_manager","super_inventory_manager"]),
   getReportsAnalyticsDashboard
+);
+
+router.post(
+  "/bulk-upload",
+  auth,                  // login user
+  upload.single("file"), // excel file key = file
+  bulkUploadStock,checkRole(["stock_manager","inventory_manager","super_inventory_manager"])
 );
 
 router.post('/add-stock',auth,checkRole(["stock_manager","inventory_manager","super_inventory_manager"]),addStockItem)

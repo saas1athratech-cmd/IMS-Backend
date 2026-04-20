@@ -3648,7 +3648,8 @@ exports.getBranchDashboard = async (req, res) => {
       "super_stock_manager",
       "super_admin",
       "super_sales_manager",
-      "super_inventory_manager"
+      "super_inventory_manager",
+      "sales_manager"
     ];
 
     if (!SUPER_ROLES.includes(role)) {
