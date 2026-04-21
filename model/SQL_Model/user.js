@@ -23,32 +23,35 @@ const User = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false
     },
+
     phone: {
-  type: DataTypes.STRING,
-  allowNull: true
-},
+      type: DataTypes.STRING,
+      allowNull: true
+    },
 
-address: {
-  type: DataTypes.TEXT,
-  allowNull: true
-},
+    address: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
 
-profile_image: {
-  type: DataTypes.STRING,
-  allowNull: true
-},
+    profile_image: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
 
-profile_image_public_id: {
-  type: DataTypes.STRING,
-  allowNull: true
-},
-is_profile_set: {
-  type: DataTypes.BOOLEAN,
-  defaultValue: false
-},
+    profile_image_public_id: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+
+    is_profile_set: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+
     secure_password: {
       type: DataTypes.TEXT,
-      
+      allowNull: true
     },
 
     role_id: {
@@ -73,18 +76,34 @@ is_profile_set: {
     last_login: {
       type: DataTypes.DATE,
       allowNull: true
+    },
+
+    password_changed_at: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+
+    recovery_email: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: {
+        isEmail: true
+      }
+    },
+
+    recovery_phone: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   },
   {
     tableName: "users",
+    schema: "public",
     underscored: true,
     timestamps: true
   }
 );
 
-// ========================
-// 🔐 HASH PASSWORD
-// ========================
 User.beforeCreate(async (user) => {
   if (user.password) {
     user.password = await bcrypt.hash(user.password, 10);
@@ -94,12 +113,10 @@ User.beforeCreate(async (user) => {
 User.beforeUpdate(async (user) => {
   if (user.changed("password")) {
     user.password = await bcrypt.hash(user.password, 10);
+    user.password_changed_at = new Date();
   }
 });
 
-// ========================
-// 🔑 VALIDATE PASSWORD
-// ========================
 User.prototype.validatePassword = function (password) {
   return bcrypt.compare(password, this.password);
 };

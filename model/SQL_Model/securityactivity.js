@@ -60,25 +60,11 @@ const SecurityActivity = sequelize.define(
     logout_at: {
       type: DataTypes.DATE,
       allowNull: true
-    },
-
-    password_changed_at: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-
-    recovery_email: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-
-    recovery_phone: {
-      type: DataTypes.STRING,
-      allowNull: true
     }
   },
   {
     tableName: "security_activities",
+    schema: "public",
     underscored: true,
     timestamps: true,
     indexes: [
