@@ -46,6 +46,7 @@ app.use('/sales',require('./routes/sql/sales'))
 app.use('/combine',require('./routes/sql/combineroute'))
 app.use("/system-setting", require("./routes/sql/systemSettingRoutes"));
 app.use('/getcsv',require('./routes/sql/csv'))
+app.use('/profile',require('./routes/sql/profile'))
 // MongoDB Connection
 mongoose
   .connect(process.env.MONGO_URL)

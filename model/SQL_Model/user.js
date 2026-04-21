@@ -23,7 +23,29 @@ const User = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false
     },
+    phone: {
+  type: DataTypes.STRING,
+  allowNull: true
+},
 
+address: {
+  type: DataTypes.TEXT,
+  allowNull: true
+},
+
+profile_image: {
+  type: DataTypes.STRING,
+  allowNull: true
+},
+
+profile_image_public_id: {
+  type: DataTypes.STRING,
+  allowNull: true
+},
+is_profile_set: {
+  type: DataTypes.BOOLEAN,
+  defaultValue: false
+},
     secure_password: {
       type: DataTypes.TEXT,
       
