@@ -911,84 +911,94 @@ exports.getAllUsersForDashboard = async (req, res) => {
     let whereCondition = {};
 
     // =========================
-    // 🔐 ROLE + BRANCH LOGIC
+    // ROLE + BRANCH LOGIC
     // =========================
-
-    // SUPER ADMIN → ALL USERS
     if (user.role === "super_admin") {
       whereCondition = {};
-    }
-
-    // ADMIN → ONLY THEIR BRANCH USERS
-    else if (user.role === "admin") {
+    } else if (user.role === "admin") {
       whereCondition.branch_id = user.branch_id;
-    }
-
-    // OTHER USERS → EXISTING LOGIC
-    else {
-      if (user.branches[0] !== "ALL") {
+    } else {
+      if (user.branches?.[0] !== "ALL") {
         whereCondition.branch_id = {
-          [Op.in]: user.branches
+          [Op.in]: user.branches || [],
         };
       }
     }
 
     const users = await User.findAll({
       where: whereCondition,
-
       attributes: [
         "id",
         "name",
         "email",
+        "phone",
+        "address",
+        "profile_image",
+        "profile_image_public_id",
+        "is_profile_set",
         "created_at",
         "branch_id",
         "last_login",
-        "is_active"
+        "is_active",
+        "recovery_email",
+        "recovery_phone",
+        "password_changed_at",
       ],
-
       include: [
         {
           association: "role",
-          attributes: ["name"]
+          attributes: ["id", "name"],
         },
         {
           model: Branch,
           as: "branch",
-          attributes: ["id", "name", "location"]
-        }
+          attributes: ["id", "name", "location"],
+          required: false,
+        },
       ],
-
-      order: [["created_at", "DESC"]]
+      order: [["created_at", "DESC"]],
     });
 
     const result = users.map((u) => {
-      const createdAt = new Date(u.created_at);
+      const createdAt = u.created_at ? new Date(u.created_at) : null;
 
-      const aging = Math.floor(
-        (Date.now() - createdAt.getTime()) /
-        (1000 * 60 * 60 * 24)
-      );
+      const aging = createdAt
+        ? Math.floor(
+            (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+          )
+        : 0;
 
       return {
         id: u.id,
         name: u.name,
         email: u.email,
+        phone: u.phone || null,
+        address: u.address || null,
+        profile_image: u.profile_image || null,
+        profile_image_public_id: u.profile_image_public_id || null,
+        is_profile_set: u.is_profile_set ?? false,
         role: u.role?.name || null,
+        role_id: u.role?.id || u.role_id || null,
+        branch_id: u.branch_id || null,
         branch: u.branch?.name || null,
+        branch_location: u.branch?.location || null,
         aging,
+        created_at: u.created_at || null,
         lastLogin: u.last_login || null,
-        isActive: u.is_active
+        isActive: u.is_active,
+        recovery_email: u.recovery_email || null,
+        recovery_phone: u.recovery_phone || null,
+        password_changed_at: u.password_changed_at || null,
       };
     });
 
-    res.json({
+    return res.json({
       totalUsers: result.length,
-      users: result
+      users: result,
     });
-
   } catch (err) {
-    console.error("ERROR:", err);
-    res.status(500).json({ error: err.message });
+    console.error("ERROR in getAllUsersForDashboard:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
