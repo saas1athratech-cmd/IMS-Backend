@@ -597,6 +597,37 @@ exports.getSuperAdminDashboard = async (req, res) => {
     const user = req.user;
 
     // =========================
+    // 🔧 COLUMN RESOLVER (DEV + PROD SAFE)
+    // =========================
+    const resolveColumn = (Model, candidates = []) => {
+      const attrs = Model?.rawAttributes || {};
+
+      // 1) direct attribute match
+      for (const key of candidates) {
+        if (attrs[key]) {
+          return attrs[key].field || key;
+        }
+      }
+
+      // 2) actual DB field match
+      for (const key of candidates) {
+        for (const attrName of Object.keys(attrs)) {
+          const attr = attrs[attrName];
+          if (attr?.field === key) {
+            return attr.field;
+          }
+        }
+      }
+
+      // 3) fallback
+      return candidates[0];
+    };
+
+    const ledgerCreatedCol = resolveColumn(Ledger, ["created_at", "createdAt"]);
+    const userCreatedCol = resolveColumn(User, ["created_at", "createdAt"]);
+    const stockUpdatedCol = resolveColumn(Stock, ["updated_at", "updatedAt"]);
+
+    // =========================
     // 🔑 ROLE CHECK
     // =========================
     const isSuperAdmin =
@@ -636,25 +667,27 @@ exports.getSuperAdminDashboard = async (req, res) => {
     // =========================
     // 🔹 SALES ANALYTICS
     // =========================
+    const salesDateExpr = sequelize.fn("DATE", sequelize.col(ledgerCreatedCol));
+
     const salesData = await Ledger.findAll({
       attributes: [
-        [sequelize.fn("DATE", sequelize.col("created_at")), "date"],
+        [salesDateExpr, "date"],
         [sequelize.fn("SUM", sequelize.col("total")), "total"]
       ],
       where: { ...branchFilter, type: "SALE" },
-      group: [sequelize.fn("DATE", sequelize.col("created_at"))],
-      order: [[sequelize.fn("DATE", sequelize.col("created_at")), "ASC"]],
+      group: [salesDateExpr],
+      order: [[salesDateExpr, "ASC"]],
       raw: true
     });
 
     const purchaseData = await Ledger.findAll({
       attributes: [
-        [sequelize.fn("DATE", sequelize.col("created_at")), "date"],
+        [salesDateExpr, "date"],
         [sequelize.fn("SUM", sequelize.col("total")), "total"]
       ],
       where: { ...branchFilter, type: "PURCHASE" },
-      group: [sequelize.fn("DATE", sequelize.col("created_at"))],
-      order: [[sequelize.fn("DATE", sequelize.col("created_at")), "ASC"]],
+      group: [salesDateExpr],
+      order: [[salesDateExpr, "ASC"]],
       raw: true
     });
 
@@ -738,21 +771,21 @@ exports.getSuperAdminDashboard = async (req, res) => {
     const ledgerActivities = await Ledger.findAll({
       where: branchFilter,
       limit: 5,
-      order: [["created_at", "DESC"]],
+      order: [[sequelize.col(ledgerCreatedCol), "DESC"]],
       raw: true
     });
 
     const userActivities = await User.findAll({
       where: isSuperAdmin ? {} : { branch_id: user.branch_id },
       limit: 2,
-      order: [["created_at", "DESC"]],
+      order: [[sequelize.col(userCreatedCol), "DESC"]],
       raw: true
     });
 
     const stockActivities = await Stock.findAll({
       where: branchFilter,
       limit: 2,
-      order: [["updated_at", "DESC"]],
+      order: [[sequelize.col(stockUpdatedCol), "DESC"]],
       raw: true
     });
 
@@ -762,7 +795,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
       activities.push({
         title: "User Registered",
         description: u.name || "New User",
-        time: u.created_at,
+        time: u[userCreatedCol] ?? u.created_at ?? u.createdAt ?? null,
         type: "user",
         icon: "user"
       });
@@ -772,7 +805,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
       activities.push({
         title: "Stock Updated",
         description: s.item || "Stock Item",
-        time: s.updated_at,
+        time: s[stockUpdatedCol] ?? s.updated_at ?? s.updatedAt ?? null,
         type: "stock",
         icon: "box"
       });
@@ -782,7 +815,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
       activities.push({
         title: l.type === "SALE" ? "Sales Transaction" : "Purchase Entry",
         description: `₹${l.total}`,
-        time: l.created_at,
+        time: l[ledgerCreatedCol] ?? l.created_at ?? l.createdAt ?? null,
         type: String(l.type || "").toLowerCase(),
         icon: l.type === "SALE" ? "dollar" : "cart"
       });
