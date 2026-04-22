@@ -4,7 +4,7 @@ const { Branch, User, Role, Stock, sequelize, Ledger,  ClientLedger,
 const { Op } = require("sequelize");
 const StockMovement = require("../../model/SQL_Model/stockmovement");
 const bcrypt = require("bcryptjs");
-const Sentry = require("@sentry/node");
+
 const { encryptPassword } = require("../../utils/crypto"); 
 const { decryptPassword } = require("../../utils/crypto");
 function getDateFilter(range) {
