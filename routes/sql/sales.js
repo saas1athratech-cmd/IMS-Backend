@@ -44,7 +44,7 @@ router.get(
 
 
 // ye saare parth k screen sales manager ka data provide kr rahi h 
-
+router.get('/getitemlist',auth,checkRole(["admin","sales_manager","super_sales_manager"]),salemanager.getQuotationProducts)
 router.get('/getstate',auth, checkRole(["admin","sales_manager","super_sales_manager"]),salemanager.getAllStatesDashboard)
 router.get('/getstate/:state',auth, checkRole(["admin","sales_manager","super_sales_manager"]),salemanager.getStateDashboard)
 router.get('/branch/:branchId',auth, checkRole(["admin","sales_manager","super_sales_manager"]),salemanager.getBranchDashboard)
