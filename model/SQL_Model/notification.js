@@ -31,6 +31,7 @@ const Notification = sequelize.define(
   },
   {
     tableName: "notifications",
+      schema: "public",
     underscored: true,
     timestamps: true
   }

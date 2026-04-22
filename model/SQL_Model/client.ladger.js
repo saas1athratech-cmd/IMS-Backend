@@ -40,6 +40,7 @@ const ClientLedger = sequelize.define("ClientLedger", {
 
 }, {
   tableName: "client_ledger",
+    schema: "public",
   timestamps: true
 });
 

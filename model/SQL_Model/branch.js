@@ -47,6 +47,7 @@ const Branch = sequelize.define(
   },
   {
     tableName: "branches",
+      schema: "public",
     underscored: true,
     timestamps: true
   }

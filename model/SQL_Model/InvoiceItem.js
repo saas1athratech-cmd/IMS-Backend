@@ -15,6 +15,7 @@ const InvoiceItem = sequelize.define("InvoiceItem", {
 
 }, {
   tableName: "invoice_items",
+    schema: "public",
   timestamps: true
 });
 

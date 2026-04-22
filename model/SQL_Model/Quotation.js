@@ -30,6 +30,7 @@ const Quotation = sequelize.define("Quotation", {
 
 },{
   tableName:"quotations",
+    schema: "public",
   timestamps:true
 });
 
@@ -46,6 +47,7 @@ const QuotationItem = sequelize.define("QuotationItem",{
   amount: DataTypes.FLOAT
 },{
   tableName:"quotation_items",
+    schema: "public",
   timestamps:true
 });
 

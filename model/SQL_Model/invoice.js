@@ -80,6 +80,7 @@ const Invoice = sequelize.define(
   },
   {
     tableName: "invoices",
+      schema: "public",
     underscored: true,
     timestamps: true
   }

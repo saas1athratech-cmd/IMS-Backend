@@ -40,6 +40,7 @@ const Client = sequelize.define("Client", {
 
 }, {
   tableName: "clients",
+    schema: "public",
   timestamps: true
 });
 

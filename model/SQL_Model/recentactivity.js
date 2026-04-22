@@ -65,6 +65,7 @@ const RecentActivity = sequelize.define(
   },
   {
     tableName: "recent_activities",
+      schema: "public",
     underscored: true,
     timestamps: true
   }
