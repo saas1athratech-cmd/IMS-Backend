@@ -384,27 +384,22 @@ exports.getBranchDashboard = async (req, res) => {
     console.log("REQUESTED:", requestedBranchId);
 
     // =========================
-    // 🔐 FINAL SECURITY CHECK (FIXED)
+    // FINAL SECURITY CHECK
     // =========================
     const isSuper = user.branches?.[0] === "ALL";
 
     if (!isSuper) {
-      // 👇 agar branches array nahi hai to fallback
       if (user.branches?.length) {
         if (!user.branches.includes(requestedBranchId)) {
           return res.status(403).json({ error: "❌ Access Denied - Wrong Branch" });
         }
       } else {
-        // 👇 most important fix (branch admin case)
         if (user.branch_id !== requestedBranchId) {
           return res.status(403).json({ error: "❌ Access Denied - Wrong Branch" });
         }
       }
     }
 
-    // =========================
-    // 🔥 FORCE BRANCH (SAFE)
-    // =========================
     const finalBranchId = isSuper
       ? requestedBranchId
       : (user.branch_id || requestedBranchId);
@@ -418,6 +413,7 @@ exports.getBranchDashboard = async (req, res) => {
 
     const stocks = await Stock.findAll({
       where: { branch_id: finalBranchId },
+      order: [["created_at", "DESC"]],
     });
 
     const users = await User.findAll({
@@ -427,20 +423,19 @@ exports.getBranchDashboard = async (req, res) => {
     // =========================
     // CALCULATE STATS
     // =========================
-    const totalStock = stocks.reduce((sum, i) => sum + i.quantity, 0);
-    const totalValue = stocks.reduce((sum, i) => sum + i.value, 0);
+    const totalStock = stocks.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+    const totalValue = stocks.reduce((sum, i) => sum + Number(i.value || 0), 0);
 
     const totalSales =
       (await Ledger.sum("total", {
         where: { branch_id: finalBranchId, type: "SALE" },
       })) || 0;
 
-    const agingItems = stocks.filter((s) => s.aging > 5).length;
+    const agingItems = stocks.filter((s) => Number(s.aging || 0) > 5).length;
 
     // =========================
-    // CHARTS DATA
+    // STOCK MOVEMENT CHART
     // =========================
-
     const stockMovement = await StockMovement.findAll({
       where: { branch_id: finalBranchId },
       attributes: [
@@ -449,7 +444,7 @@ exports.getBranchDashboard = async (req, res) => {
           sequelize.fn(
             "SUM",
             sequelize.literal(
-              `CASE WHEN "StockMovement"."type"='IN' THEN quantity ELSE 0 END`
+              `CASE WHEN "StockMovement"."type"='IN' THEN "StockMovement"."quantity" ELSE 0 END`
             )
           ),
           "stockIn",
@@ -458,7 +453,7 @@ exports.getBranchDashboard = async (req, res) => {
           sequelize.fn(
             "SUM",
             sequelize.literal(
-              `CASE WHEN "StockMovement"."type"='OUT' THEN quantity ELSE 0 END`
+              `CASE WHEN "StockMovement"."type"='OUT' THEN "StockMovement"."quantity" ELSE 0 END`
             )
           ),
           "stockOut",
@@ -471,44 +466,68 @@ exports.getBranchDashboard = async (req, res) => {
 
     const barChart = stockMovement.map((d, i) => ({
       week: `Week ${i + 1}`,
-      stockIn: Number(d.stockIn),
-      stockOut: Number(d.stockOut),
+      stockIn: Number(d.stockIn || 0),
+      stockOut: Number(d.stockOut || 0),
     }));
 
+    // =========================
+    // SALES / PURCHASE TREND
+    // =========================
     const salesData = await Ledger.findAll({
       where: { branch_id: finalBranchId },
       attributes: [
-        [sequelize.literal(`TO_CHAR("Ledger"."createdAt",'IW')`), "week"],
+        [sequelize.literal(`TO_CHAR("Ledger"."created_at",'IW')`), "week"],
         [
           sequelize.fn(
             "SUM",
-            sequelize.literal(`CASE WHEN "Ledger"."type"='SALE' THEN total ELSE 0 END`)
+            sequelize.literal(
+              `CASE WHEN "Ledger"."type"='SALE' THEN "Ledger"."total" ELSE 0 END`
+            )
           ),
           "sales",
         ],
         [
           sequelize.fn(
             "SUM",
-            sequelize.literal(`CASE WHEN "Ledger"."type"='PURCHASE' THEN total ELSE 0 END`)
+            sequelize.literal(
+              `CASE WHEN "Ledger"."type"='PURCHASE' THEN "Ledger"."total" ELSE 0 END`
+            )
           ),
           "purchase",
         ],
       ],
-      group: [sequelize.literal(`TO_CHAR("Ledger"."createdAt",'IW')`)],
-      order: [[sequelize.literal(`TO_CHAR("Ledger"."createdAt",'IW')`), "ASC"]],
+      group: [sequelize.literal(`TO_CHAR("Ledger"."created_at",'IW')`)],
+      order: [[sequelize.literal(`TO_CHAR("Ledger"."created_at",'IW')`), "ASC"]],
       raw: true,
     });
 
     const lineChart = salesData.map((d, i) => ({
       week: `Week ${i + 1}`,
-      stockIn: Number(d.sales),
-      stockOut: Number(d.purchase),
+      stockIn: Number(d.sales || 0),
+      stockOut: Number(d.purchase || 0),
+    }));
+
+    // =========================
+    // TABLE DATA
+    // =========================
+    const stockTable = stocks.map((s) => ({
+      id: s.id,
+      item_name: s.item || "",
+      category: s.category || "",
+      quantity: Number(s.quantity || 0),
+      hsn: s.hsn || "",
+      grn: s.grn || "",
+      batch_no: s.batch_no || "",
+      aging: Number(s.aging || 0),
+      status: s.status || "",
+      value: Number(s.value || 0),
     }));
 
     // =========================
     // FINAL RESPONSE
     // =========================
-    res.json({
+    return res.json({
+      success: true,
       branchUsed: finalBranchId,
       branchInfo: branch,
       stats: {
@@ -521,13 +540,13 @@ exports.getBranchDashboard = async (req, res) => {
         stockMovement: barChart,
         salesTrend: lineChart,
       },
-      stocks,
+      stocks: stockTable,
       users,
     });
 
   } catch (err) {
     console.error("ERROR:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 };
 exports.getAdminDashboard = async (req, res) => {
