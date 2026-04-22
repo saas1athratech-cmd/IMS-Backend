@@ -817,7 +817,6 @@ exports.getSuperAdminDashboard = async (req, res) => {
   }
 };
 
-
 exports.getBranchAnalytics = async (req, res) => {
   try {
     const { branchId } = req.params;
