@@ -518,7 +518,108 @@ exports.createQuotation = async (req, res) => {
   }
 };
 
+exports.getQuotationProducts = async (req, res) => {
+  try {
+    const branch_id = req.user?.branch_id;
 
+    let {
+      search = "",
+      category = "",
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    if (!branch_id) {
+      return res.status(400).json({
+        success: false,
+        message: "branch_id missing in req.user",
+      });
+    }
+
+    // pagination fix
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 50;
+
+    if (page < 1) page = 1;
+    if (limit < 1) limit = 50;
+    if (limit > 50) limit = 50; // max 50 items
+
+    const offset = (page - 1) * limit;
+
+    const where = {
+      branch_id,
+      status: "GOOD",
+      quantity: {
+        [Op.gt]: 0,
+      },
+    };
+
+    if (search.trim()) {
+      where.item = {
+        [Op.iLike]: `%${search.trim()}%`,
+      };
+    }
+
+    if (category.trim()) {
+      where.category = category.trim();
+    }
+
+    const { count, rows } = await Stock.findAndCountAll({
+      where,
+      attributes: [
+        "id",
+        "item",
+        "category",
+        "quantity",
+        "rate",
+        "value",
+        "hsn",
+        "status",
+        "branch_id",
+      ],
+      order: [["item", "ASC"]],
+      limit,
+      offset,
+    });
+
+    const totalPages = Math.ceil(count / limit);
+
+    return res.status(200).json({
+      success: true,
+      message: "Quotation products fetched successfully",
+
+      pagination: {
+        total_items: count,
+        current_page: page,
+        per_page: limit,
+        total_pages: totalPages,
+        has_next_page: page < totalPages,
+        has_prev_page: page > 1,
+      },
+
+      data: rows.map((s) => ({
+        stock_id: s.id,
+        product_name: s.item,
+        category: s.category || "",
+        available_qty: Number(s.quantity || 0),
+        unit_price: Number(s.rate || 0),
+        total_value: Number(s.value || 0),
+        hsn: s.hsn || "",
+        status: s.status || "",
+        branch_id: s.branch_id,
+        unit: "",
+      })),
+    });
+  } catch (error) {
+    console.error("getQuotationProducts error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch quotation products",
+      error: error.message,
+    });
+  }
+};
 
 async function createInvoiceFromQuotation(quotationId, transaction) {
   const quotation = await Quotation.findByPk(quotationId, {
