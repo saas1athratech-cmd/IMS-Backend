@@ -166,33 +166,33 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    await SecurityActivity.update(
-      {
-        is_active: false,
-        logout_at: loginTime
-      },
-      {
-        where: {
-          user_id: user.id,
-          activity_type: "login",
-          is_active: true,
-          device_name: deviceName,
-          ip_address: ipAddress
-        }
-      }
-    );
+    // await SecurityActivity.update(
+    //   {
+    //     is_active: false,
+    //     logout_at: loginTime
+    //   },
+    //   {
+    //     where: {
+    //       user_id: user.id,
+    //       activity_type: "login",
+    //       is_active: true,
+    //       device_name: deviceName,
+    //       ip_address: ipAddress
+    //     }
+    //   }
+    // );
 
-    await SecurityActivity.create({
-      user_id: user.id,
-      activity_type: "login",
-      device_name: deviceName,
-      ip_address: ipAddress,
-      location,
-      logged_in_at: loginTime,
-      session_token: token,
-      is_active: true,
-      logout_at: null
-    });
+    // await SecurityActivity.create({
+    //   user_id: user.id,
+    //   activity_type: "login",
+    //   device_name: deviceName,
+    //   ip_address: ipAddress,
+    //   location,
+    //   logged_in_at: loginTime,
+    //   session_token: token,
+    //   is_active: true,
+    //   logout_at: null
+    // });
 
     res.json({
       token,
