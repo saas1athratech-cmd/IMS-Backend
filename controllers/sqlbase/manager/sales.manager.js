@@ -24,6 +24,16 @@ const { generateIRN } = require("../../../utils/taxproService");
 const { generateEinvoicePayload } = require("../../../utils/einvoicePayload");
 
 
+// ✅ Add this
+const { createClient } = require("@supabase/supabase-js");
+
+// ✅ Add this
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+
 
 async function createInvoiceFromQuotation(quotationId, transaction) {
   const quotation = await Quotation.findByPk(quotationId, {
@@ -1180,7 +1190,7 @@ exports.convertQuotationToInvoice = async (req, res) => {
       }, { transaction: t });
     }
 
-    // ===== 5. COPY QUOTATION ITEMS TO INVOICE ITEMS ONLY ONCE =====
+    // ===== 5. COPY ITEMS ONLY ONCE =====
     const existingCount = await InvoiceItem.count({
       where: { invoice_id: invoice.id },
       transaction: t
@@ -1201,7 +1211,7 @@ exports.convertQuotationToInvoice = async (req, res) => {
       }
     }
 
-    // ===== 6. STOCK CUT + LEDGER + CLIENT LEDGER ONLY ONCE =====
+    // ===== 6. STOCK + LEDGER ONLY ONCE =====
     if (invoice.status !== "final") {
       for (const it of items) {
         const stock = await Stock.findOne({
@@ -1229,7 +1239,7 @@ exports.convertQuotationToInvoice = async (req, res) => {
           });
         }
 
-        stock.quantity = Number(stock.quantity) - Number(it.quantity);
+        stock.quantity -= Number(it.quantity);
         await stock.save({ transaction: t });
 
         await Ledger.create({
@@ -1261,36 +1271,47 @@ exports.convertQuotationToInvoice = async (req, res) => {
 
     await t.commit();
 
-    // ===== 7. RELOAD FINAL INVOICE ITEMS FOR PDF =====
+    // ===== 7. GET FINAL ITEMS =====
     const invoiceItems = await InvoiceItem.findAll({
       where: { invoice_id: invoice.id }
     });
 
-    // ===== 8. GENERATE PDF =====
-    try {
-      const pdf = await generateGSTInvoicePDF({
-        branch,
-        invoice,
-        client,
-        items: invoiceItems
+    // ===== 8. GENERATE PDF BUFFER =====
+    const pdfBuffer = await generateGSTInvoicePDF({
+      branch,
+      invoice,
+      client,
+      items: invoiceItems
+    });
+
+    // ===== 9. UPLOAD TO SUPABASE =====
+    const fileName = `invoices/${invoice.invoice_no}-${Date.now()}.pdf`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("invoice-pdfs")
+      .upload(fileName, pdfBuffer, {
+        contentType: "application/pdf",
+        upsert: true
       });
 
-      res.set({
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename=${invoice.invoice_no}.pdf`
-      });
+    if (uploadError) throw uploadError;
 
-      return res.send(pdf);
+    // ===== 10. GET SIGNED URL =====
+    const { data: signedData, error: signedError } =
+      await supabase.storage
+        .from("invoice-pdfs")
+        .createSignedUrl(fileName, 60 * 10);
 
-    } catch (pdfErr) {
-      console.error("PDF error:", pdfErr);
+    if (signedError) throw signedError;
 
-      return res.status(200).json({
-        success: true,
-        message: "Invoice created successfully but PDF generation failed",
-        invoice
-      });
-    }
+    // ===== 11. FINAL RESPONSE =====
+    return res.status(200).json({
+      success: true,
+      message: "Invoice created successfully",
+      invoice,
+      download_url: signedData.signedUrl,
+      file_name: fileName
+    });
 
   } catch (err) {
     if (t && !t.finished) {
@@ -4061,42 +4082,116 @@ exports.getItemDashboard = async (req, res) => {
     });
   }
 };
-
 exports.getInvoicePDF = async (req, res) => {
   try {
     const { invoice_no } = req.params;
 
-    // id ki jagah invoice_no se fetch
+    if (!invoice_no) {
+      return res.status(400).json({
+        success: false,
+        error: "invoice_no is required in params"
+      });
+    }
+
     const invoice = await Invoice.findOne({
       where: { invoice_no }
     });
 
     if (!invoice) {
-      return res.status(404).json({ error: "Invoice not found" });
+      return res.status(404).json({
+        success: false,
+        error: "Invoice not found"
+      });
     }
 
+    const bucketName = "invoice-pdfs";
+    const safeInvoiceNo = String(invoice.invoice_no).replace(/[^a-zA-Z0-9-_]/g, "_");
+    const fileName = `invoices/${safeInvoiceNo}.pdf`;
+
+    console.log("bucketName =", bucketName);
+    console.log("invoice.invoice_no =", invoice.invoice_no);
+    console.log("safeInvoiceNo =", safeInvoiceNo);
+    console.log("fileName =", fileName);
+console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
     const items = await InvoiceItem.findAll({
-      where: { invoice_id: invoice.id } // id yahan same rahega
+      where: { invoice_id: invoice.id }
     });
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "No invoice items found"
+      });
+    }
 
     const client = await Client.findByPk(invoice.client_id);
     const branch = await Branch.findByPk(invoice.branch_id);
 
-    const pdf = await generateGSTInvoicePDF({
+    if (!branch) {
+      return res.status(404).json({
+        success: false,
+        error: "Branch not found"
+      });
+    }
+
+    // pehle signed URL try karo
+    const { data: signedTry, error: signedTryError } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(fileName, 60 * 10);
+
+    if (!signedTryError && signedTry?.signedUrl) {
+      return res.status(200).json({
+        success: true,
+        message: "PDF fetched from storage",
+        invoice_no: invoice.invoice_no,
+        download_url: signedTry.signedUrl
+      });
+    }
+
+    console.log("signedTryError =", signedTryError?.message || null);
+
+    const pdfBuffer = await generateGSTInvoicePDF({
       branch,
       invoice,
       client,
       items
     });
 
-    res.set({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename=${invoice.invoice_no}.pdf`
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(fileName, pdfBuffer, {
+        contentType: "application/pdf",
+        upsert: true
+      });
+
+    console.log("uploadData =", uploadData);
+    console.log("uploadError =", uploadError);
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(fileName, 60 * 10);
+
+    if (signedError) {
+      throw signedError;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "PDF generated and stored successfully",
+      invoice_no: invoice.invoice_no,
+      download_url: signedData.signedUrl
     });
 
-    res.send(pdf);
-
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("getInvoicePDF error:", err);
+
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 };

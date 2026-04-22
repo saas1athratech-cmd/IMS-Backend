@@ -212,13 +212,25 @@ exports.login = async (req, res) => {
   }
 };
 
+const MANAGER_ROLES = [
+  "sales_manager",
+  "inventory_manager",
+  "purchase_manager",
+  "stock_manager",
+  "manager"
+];
 
-function generateOTP(length = 6) {
-  let otp = "";
-  for (let i = 0; i < length; i++) {
-    otp += Math.floor(Math.random() * 10);
+const ADMIN_ROLES = [
+  "admin",
+  "branch_admin"
+];
+
+function uniqueUsersById(users = []) {
+  const map = new Map();
+  for (const user of users) {
+    if (user?.id) map.set(user.id, user);
   }
-  return otp;
+  return Array.from(map.values());
 }
 
 function generateOTP(length = 6) {
@@ -229,61 +241,93 @@ function generateOTP(length = 6) {
   return otp;
 }
 
-function getApproverType(roleName) {
-  if (roleName === "admin") {
-    return "super_admin";
-  }
+function isManagerRole(roleName = "") {
+  return MANAGER_ROLES.includes(String(roleName).toLowerCase());
+}
+
+function isAdminRole(roleName = "") {
+  return ADMIN_ROLES.includes(String(roleName).toLowerCase());
+}
+
+function isSuperAdminRole(roleName = "") {
+  return String(roleName).toLowerCase() === "super_admin";
+}
+
+// Kis role ka approver kaun hoga
+function getApproverType(roleName = "") {
+  const normalized = String(roleName).toLowerCase();
+
+  if (normalized === "super_admin") return "self";
+  if (isManagerRole(normalized)) return "branch_admin";
+  if (isAdminRole(normalized)) return "super_admin";
+
+  // default normal users → branch admin
   return "branch_admin";
 }
 
 async function getActiveSuperAdmins() {
-  return User.findAll({
+  return await User.findAll({
     where: { is_active: true },
     include: [
       {
         model: Role,
         as: "role",
-        where: { name: "super_admin" },
-        attributes: ["id", "name"]
+        attributes: ["id", "name"],
+        required: true,
+        where: { name: "super_admin" }
       }
     ]
   });
 }
 
 async function getActiveBranchAdmins(branchId, excludeUserId = null) {
-  const where = {
-    is_active: true,
-    branch_id: branchId
-  };
+  if (!branchId) return [];
 
+  const where = { is_active: true, branch_id: branchId };
   if (excludeUserId) {
     where.id = { [Op.ne]: excludeUserId };
   }
 
-  return User.findAll({
+  return await User.findAll({
     where,
     include: [
       {
         model: Role,
         as: "role",
-        where: { name: "admin" },
-        attributes: ["id", "name"]
+        attributes: ["id", "name"],
+        required: true,
+        where: {
+          name: {
+            [Op.in]: ["admin", "branch_admin"]
+          }
+        }
       }
     ]
   });
 }
 
-async function createNotificationsForUsers(users, payloadBuilder) {
-  if (!users || !users.length) return;
+async function createNotificationsForUsers(users = [], payloadFactory) {
+  const uniqueUsers = uniqueUsersById(users);
 
-  const rows = users.map((user) => ({
-    user_id: user.id,
-    ...payloadBuilder(user)
-  }));
+  if (!uniqueUsers.length) return;
 
-  await Notification.bulkCreate(rows);
+  const notifications = uniqueUsers.map((user) => {
+    const payload =
+      typeof payloadFactory === "function" ? payloadFactory(user) : payloadFactory;
+
+    return {
+      user_id: user.id,
+      title: payload.title,
+      message: payload.message,
+      type: payload.type,
+      is_read: false
+    };
+  });
+
+  if (notifications.length) {
+    await Notification.bulkCreate(notifications);
+  }
 }
-
 function uniqueUsersById(users = []) {
   const map = new Map();
   for (const user of users) {
@@ -318,12 +362,14 @@ exports.requestPasswordReset = async (req, res) => {
         {
           model: Role,
           as: "role",
-          attributes: ["id", "name"]
+          attributes: ["id", "name"],
+          required: false
         },
         {
           model: Branch,
           as: "branch",
-          attributes: ["id", "name"]
+          attributes: ["id", "name"],
+          required: false
         }
       ]
     });
@@ -342,25 +388,24 @@ exports.requestPasswordReset = async (req, res) => {
       });
     }
 
+    const roleName = String(user.role?.name || "").toLowerCase();
     const otp = generateOTP(6);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    // =========================
-    // 🔥 SUPER ADMIN FLOW
-    // =========================
-    if (user.role?.name === "super_admin") {
-
-      await PasswordReset.update(
-        { status: "used" },
-        {
-          where: {
-            user_id: user.id,
-            status: "pending"
-          }
+    // Old pending requests close
+    await PasswordReset.update(
+      { status: "used" },
+      {
+        where: {
+          user_id: user.id,
+          status: "pending"
         }
-      );
+      }
+    );
 
-      await PasswordReset.create({
+    // SUPER ADMIN => OTP email direct
+    if (isSuperAdminRole(roleName)) {
+      const resetRequest = await PasswordReset.create({
         user_id: user.id,
         branch_id: null,
         otp,
@@ -368,12 +413,19 @@ exports.requestPasswordReset = async (req, res) => {
         expires_at: expiresAt
       });
 
-      // EMAIL SEND
       await sgMail.send({
         to: user.email,
         from: process.env.SENDGRID_FROM_EMAIL,
         subject: "Super Admin Password Reset OTP",
         html: `<h2>Your OTP: ${otp}</h2><p>Valid for 10 minutes</p>`
+      });
+
+      await RecentActivity.create({
+        user_id: user.id,
+        action: "SUPER_ADMIN_PASSWORD_RESET_REQUESTED",
+        details: `${user.name} (${user.email}) requested password reset OTP.`,
+        ref_id: resetRequest.id,
+        ref_type: "password_reset"
       });
 
       return res.status(200).json({
@@ -382,22 +434,14 @@ exports.requestPasswordReset = async (req, res) => {
       });
     }
 
-    // =========================
-    // 🔥 NORMAL USER FLOW (SAME AS BEFORE)
-    // =========================
-
-    const roleName = user.role?.name || "";
     const approverType = getApproverType(roleName);
 
     let approvers = [];
-    let superAdmins = [];
 
     if (approverType === "super_admin") {
       approvers = await getActiveSuperAdmins();
-      superAdmins = approvers;
     } else {
       approvers = await getActiveBranchAdmins(user.branch_id, user.id);
-      superAdmins = await getActiveSuperAdmins();
     }
 
     if (!approvers.length) {
@@ -415,17 +459,39 @@ exports.requestPasswordReset = async (req, res) => {
       status: "pending"
     });
 
+    // OTP admin notification
     await createNotificationsForUsers(approvers, () => ({
       title: "Password Reset OTP Request",
-      message: `${user.name} (${user.email}) | OTP: ${otp}`,
+      message: `${user.name} (${user.email}) requested password reset. OTP: ${otp}. Role: ${user.role?.name || "N/A"} | Branch: ${user.branch?.name || "N/A"}`,
       type: "password_reset_request"
     }));
 
-    return res.status(200).json({
-      success: true,
-      message: "OTP sent to admin. Contact admin for OTP."
+    // Optional super admin activity visibility
+    const superAdmins = await getActiveSuperAdmins();
+    await createNotificationsForUsers(
+      superAdmins.filter((sa) => !approvers.some((ap) => ap.id === sa.id)),
+      () => ({
+        title: "Password Reset Requested",
+        message: `${user.name} (${user.email}) requested password reset. Role: ${user.role?.name || "N/A"} | Branch: ${user.branch?.name || "N/A"}`,
+        type: "password_reset_request_visibility"
+      })
+    );
+
+    await RecentActivity.create({
+      user_id: user.id,
+      action: "PASSWORD_RESET_REQUESTED",
+      details: `${user.name} (${user.email}) requested password reset.`,
+      ref_id: resetRequest.id,
+      ref_type: "password_reset"
     });
 
+    return res.status(200).json({
+      success: true,
+      message:
+        approverType === "super_admin"
+          ? "OTP sent to super admin as notification."
+          : "OTP sent to admin as notification."
+    });
   } catch (error) {
     console.error("requestPasswordReset error:", error);
     return res.status(500).json({
@@ -435,6 +501,9 @@ exports.requestPasswordReset = async (req, res) => {
     });
   }
 };
+// =========================
+// VERIFY OTP
+// =========================
 // =========================
 // VERIFY OTP
 // =========================
@@ -547,7 +616,7 @@ exports.resetPasswordWithOTP = async (req, res) => {
         {
           model: Role,
           as: "role",
-          attributes: ["name"],
+          attributes: ["id", "name"],
           required: false
         },
         {
@@ -599,13 +668,15 @@ exports.resetPasswordWithOTP = async (req, res) => {
       });
     }
 
-    // password hash: model hook ya yahan bcrypt
     const hashedPassword = await bcrypt.hash(String(newPassword).trim(), 10);
     user.password = hashedPassword;
 
-    // optional secure password update, only if your project uses encrypted/plain backup logic
     if ("secure_password" in user) {
       user.secure_password = null;
+    }
+
+    if ("password_changed_at" in user) {
+      user.password_changed_at = new Date();
     }
 
     await user.save();
@@ -614,30 +685,36 @@ exports.resetPasswordWithOTP = async (req, res) => {
     resetRequest.used_at = new Date();
     await resetRequest.save();
 
-    const roleName = user.role?.name || "";
+    const roleName = String(user.role?.name || "").toLowerCase();
     const approverType = getApproverType(roleName);
 
     let approvers = [];
-    let superAdmins = [];
-
     if (approverType === "super_admin") {
       approvers = await getActiveSuperAdmins();
-      superAdmins = approvers;
     } else {
       approvers = await getActiveBranchAdmins(user.branch_id, user.id);
-      superAdmins = await getActiveSuperAdmins();
     }
 
-    // Completion notification to actual approver
+    // 1) Manager/User ko notification
+    await createNotificationsForUsers([user], () => ({
+      title: "Password Changed Successfully",
+      message: `Your password has been changed successfully. If this was not you, contact admin immediately.`,
+      type: "password_reset_success_self"
+    }));
+
+    // 2) Admin ko notification
     await createNotificationsForUsers(approvers, () => ({
-      title: "Password Reset Completed",
+      title: "Manager Password Changed",
       message: `${user.name} (${user.email}) | Role: ${
         user.role?.name || "N/A"
-      } | Branch: ${user.branch?.name || "N/A"} has successfully reset password.`,
+      } | Branch: ${
+        user.branch?.name || "N/A"
+      } has changed password successfully.`,
       type: "password_reset_done"
     }));
 
-    // Super admin visibility always
+    // 3) Optional visibility for super admins
+    const superAdmins = await getActiveSuperAdmins();
     const visibilityUsers = uniqueUsersById(superAdmins).filter(
       (sa) => !approvers.some((ap) => ap.id === sa.id)
     );
@@ -646,14 +723,19 @@ exports.resetPasswordWithOTP = async (req, res) => {
       title: "Password Reset Completed",
       message: `${user.name} (${user.email}) | Role: ${
         user.role?.name || "N/A"
-      } | Branch: ${user.branch?.name || "N/A"} has successfully reset password.`,
+      } | Branch: ${
+        user.branch?.name || "N/A"
+      } has reset password successfully.`,
       type: "password_reset_done_visibility"
     }));
 
+    // 4) Recent activity specifically for super_admin visibility
     await RecentActivity.create({
       user_id: user.id,
       action: "PASSWORD_RESET_COMPLETED",
-      details: `${user.name} (${user.email}) reset password successfully.`,
+      details: `${user.name} (${user.email}) | Role: ${
+        user.role?.name || "N/A"
+      } | Branch: ${user.branch?.name || "N/A"} reset password successfully.`,
       ref_id: resetRequest.id,
       ref_type: "password_reset"
     });
@@ -679,7 +761,7 @@ exports.getMyNotifications = async (req, res) => {
   try {
     const notifications = await Notification.findAll({
       where: { user_id: req.user.id },
-      order: [["createdAt", "DESC"]],
+      order: [["created_at", "DESC"]],
       limit: 20
     });
 
@@ -699,8 +781,68 @@ exports.getMyNotifications = async (req, res) => {
 
 exports.getRecentActivities = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    const currentUser = await User.findByPk(req.user.id, {
+      include: [
+        {
+          model: Role,
+          as: "role",
+          attributes: ["name"],
+          required: false
+        },
+        {
+          model: Branch,
+          as: "branch",
+          attributes: ["id", "name"],
+          required: false
+        }
+      ]
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const roleName = String(
+      currentUser?.role?.name || req.user.role || ""
+    ).toLowerCase();
+
+    const isSuperAdmin = roleName === "super_admin";
+    const isAdmin = ["admin", "branch_admin"].includes(roleName);
+
+    if (!isSuperAdmin && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not allowed to view recent activities"
+      });
+    }
+
+    const where = {};
+
+    // admin / branch_admin => only own branch activities
+    if (!isSuperAdmin) {
+      if (!currentUser.branch_id) {
+        return res.status(400).json({
+          success: false,
+          message: "Branch not mapped with current admin"
+        });
+      }
+
+      where.branch_id = currentUser.branch_id;
+    }
+
     const activities = await RecentActivity.findAll({
-      order: [["createdAt", "DESC"]],
+      where,
+      order: [["created_at", "DESC"]],
       limit: 20
     });
 
