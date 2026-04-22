@@ -159,7 +159,7 @@ const getOrCreateClient = async (data, t) => {
 
   const last = await Client.findOne({
     where: { branch_id: data.branch_id },
-    order: [["createdAt", "DESC"]],
+    order: [["created_at", "DESC"]],
     transaction: t
   });
 
@@ -186,11 +186,9 @@ const getOrCreateClient = async (data, t) => {
   return client;
 };
 exports.createClient = async (req, res) => {
-
   const t = await sequelize.transaction();
 
   try {
-
     const {
       client_type,
       company_name,
@@ -217,7 +215,7 @@ exports.createClient = async (req, res) => {
 
     const lastClient = await Client.findOne({
       where: { branch_id },
-      order: [["createdAt", "DESC"]],
+      order: [["created_at", "DESC"]],
       transaction: t,
       lock: t.LOCK.UPDATE
     });
@@ -225,33 +223,31 @@ exports.createClient = async (req, res) => {
     let nextNumber = 1;
 
     if (lastClient?.client_code) {
-      const lastNumber =
-        parseInt(lastClient.client_code.split("-")[1]);
+      const lastNumber = parseInt(lastClient.client_code.split("-")[1]);
       nextNumber = lastNumber + 1;
     }
 
-    const client_code =
-      `BR${branch_id}-${String(nextNumber).padStart(4, "0")}`;
+    const client_code = `BR${branch_id}-${String(nextNumber).padStart(4, "0")}`;
 
     // =========================
     // CREATE CLIENT
     // =========================
 
-    const client = await Client.create({
-
-      client_type,
-      company_name,
-      contact_person,
-      phone,
-      email,
-      address,
-      city,
-      country,
-
-      branch_id,
-      client_code
-
-    }, { transaction: t });
+    const client = await Client.create(
+      {
+        client_type,
+        company_name,
+        contact_person,
+        phone,
+        email,
+        address,
+        city,
+        country,
+        branch_id,
+        client_code
+      },
+      { transaction: t }
+    );
 
     await t.commit();
 
@@ -259,18 +255,13 @@ exports.createClient = async (req, res) => {
       message: "Client created successfully",
       client
     });
-
-  }
-  catch (err) {
-
+  } catch (err) {
     await t.rollback();
 
     res.status(500).json({
       error: err.message
     });
-
   }
-
 };
 
 exports.listClients = async (req, res) => {
@@ -322,7 +313,7 @@ exports.listClients = async (req, res) => {
           attributes: ["id", "name"]
         }
       ],
-      order: [["createdAt", "DESC"]]
+      order: [["created_at", "DESC"]]
     });
 
     // =========================
@@ -339,7 +330,7 @@ exports.listClients = async (req, res) => {
       branch_id: c.branch_id,
       branch_name: c.branch?.name || null,
 
-      created_at: c.createdAt
+      created_at: c.created_at
     }));
 
     res.json({
@@ -390,7 +381,7 @@ exports.createQuotation = async (req, res) => {
     // ================= QUOTATION NO =================
     const last = await Quotation.findOne({
       where: { branch_id },
-      order: [["createdAt", "DESC"]],
+      order: [["created_at", "DESC"]],
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
@@ -483,7 +474,7 @@ exports.createQuotation = async (req, res) => {
     // DETAILS
     doc.fontSize(10);
     doc.text(`Quotation No: ${quotation.quotation_no}`);
-    doc.text(`Date: ${new Date(quotation.createdAt).toDateString()}`);
+    doc.text(`Date: ${new Date(quotation.created_at).toDateString()}`);
     doc.text(`Status: ${quotation.status}`);
     doc.moveDown();
 
@@ -794,7 +785,7 @@ async function generateGSTInvoicePDF({ branch, invoice, client, items }) {
 
       const rightRows = [
         ["Invoice No.", invoice.invoice_no || ""],
-        ["Dated", formatDate(invoice.createdAt || new Date())],
+        ["Dated", formatDate(invoice.created_at || new Date())],
         ["Delivery Note", ""],
         ["Mode/Terms of payment", "RTGS"],
         ["Supplier's Ref.", ""],
@@ -1531,7 +1522,7 @@ exports.generateQuotationPDF = async (req, res) => {
     // ================= DETAILS =================
     doc.fontSize(10);
     doc.text(`Quotation No: ${quotation.quotation_no}`);
-    doc.text(`Date: ${new Date(quotation.createdAt).toDateString()}`);
+    doc.text(`Date: ${new Date(quotation.created_at).toDateString()}`);
     doc.text(`Status: ${quotation.status}`);
     doc.moveDown();
 
@@ -1723,7 +1714,7 @@ exports.getClientLedgerDetails = async (req, res) => {
         "type",
         "amount",
         "remark",
-        "createdAt"
+        "created_at"
       ],
       include: [
         {
@@ -1732,7 +1723,7 @@ exports.getClientLedgerDetails = async (req, res) => {
           attributes: ["id", "name"]
         }
       ],
-      order: [["createdAt", "DESC"]]
+      order: [["created_at", "DESC"]]
     });
 
     res.json({
@@ -1825,7 +1816,7 @@ exports.listQuotations = async (req, res) => {
         "valid_till",
         "reference_no",
         "status",
-        "createdAt"
+        "created_at"
       ],
       include: [
         {
@@ -1843,7 +1834,7 @@ exports.listQuotations = async (req, res) => {
           as: "items"
         }
       ],
-      order: [["createdAt", "DESC"]]
+      order: [["created_at", "DESC"]]
     });
 
     // =========================
@@ -1986,13 +1977,13 @@ exports.reportandanalysis = async (req, res) => {
     const revenueTrend = await sequelize.query(`
       SELECT 
         branch_id AS "branchId",
-        TO_CHAR("createdAt",'Mon') AS month,
+        TO_CHAR("created_at",'Mon') AS month,
         SUM(total_amount) AS revenue,
         COUNT(*) AS orders
       FROM quotations
       ${whereClause}
-      GROUP BY branch_id, month, DATE_TRUNC('month',"createdAt")
-      ORDER BY branch_id, DATE_TRUNC('month',"createdAt")
+      GROUP BY branch_id, month, DATE_TRUNC('month',"created_at")
+      ORDER BY branch_id, DATE_TRUNC('month',"created_at")
     `);
 
     // ===============================
@@ -2015,15 +2006,15 @@ exports.reportandanalysis = async (req, res) => {
     const weeklyActivity = await sequelize.query(`
       SELECT 
         branch_id AS "branchId",
-        TO_CHAR("createdAt",'Dy') AS day,
+        TO_CHAR("created_at",'Dy') AS day,
         COUNT(*) FILTER (WHERE status='pending') AS quotations,
         COUNT(*) FILTER (WHERE status='approved') AS approved,
         COUNT(*) FILTER (WHERE status='invoiced') AS invoices
       FROM quotations
-      WHERE "createdAt" >= NOW() - INTERVAL '7 days'
+      WHERE "created_at" >= NOW() - INTERVAL '7 days'
       ${branchCondition}
       GROUP BY branch_id, day
-      ORDER BY branch_id, MIN("createdAt")
+      ORDER BY branch_id, MIN("created_at")
     `);
 
     // ===============================
@@ -2032,12 +2023,12 @@ exports.reportandanalysis = async (req, res) => {
     const profitAnalysis = await sequelize.query(`
       SELECT 
         branch_id AS "branchId",
-        TO_CHAR("createdAt",'Mon') AS month,
+        TO_CHAR("created_at",'Mon') AS month,
         SUM(total_amount * 0.2) AS profit
       FROM quotations
       ${whereClause}
-      GROUP BY branch_id, month, DATE_TRUNC('month',"createdAt")
-      ORDER BY branch_id, DATE_TRUNC('month',"createdAt")
+      GROUP BY branch_id, month, DATE_TRUNC('month',"created_at")
+      ORDER BY branch_id, DATE_TRUNC('month',"created_at")
     `);
 
     // ===============================
@@ -2069,7 +2060,7 @@ exports.reportandanalysis = async (req, res) => {
       FROM quotations q
       LEFT JOIN clients c ON c.id = q.client_id
       ${isSuperSales ? "" : branchId ? `WHERE q.branch_id = ${branchId}` : ""}
-      ORDER BY q.branch_id, q."createdAt" DESC
+      ORDER BY q.branch_id, q."created_at" DESC
       LIMIT 20
     `);
 
@@ -2093,8 +2084,8 @@ exports.reportandanalysis = async (req, res) => {
     const clientBreakdown = await sequelize.query(`
       SELECT 
         branch_id AS "branchId",
-        COUNT(*) FILTER (WHERE "createdAt" >= NOW() - INTERVAL '30 days') AS "newClients",
-        COUNT(*) FILTER (WHERE "createdAt" < NOW() - INTERVAL '30 days') AS "returningClients"
+        COUNT(*) FILTER (WHERE "created_at" >= NOW() - INTERVAL '30 days') AS "newClients",
+        COUNT(*) FILTER (WHERE "created_at" < NOW() - INTERVAL '30 days') AS "returningClients"
       FROM clients
       ${whereClause}
       GROUP BY branch_id
@@ -2210,7 +2201,7 @@ const quickCards = await sequelize.query(`
 
     COALESCE(SUM(
       CASE 
-        WHEN DATE("createdAt") = CURRENT_DATE THEN total_amount
+        WHEN DATE("created_at") = CURRENT_DATE THEN total_amount
         ELSE 0
       END
     ),0) AS "todaySale",
@@ -2230,15 +2221,15 @@ const quickCards = await sequelize.query(`
     const salesAnalytics = await sequelize.query(`
       SELECT 
         branch_id AS "branchId",
-        TO_CHAR("createdAt",'Mon') AS month,
+        TO_CHAR("created_at",'Mon') AS month,
 
         SUM(CASE WHEN reference_no IS NOT NULL THEN total_amount ELSE 0 END) AS "onlineSales",
         SUM(CASE WHEN reference_no IS NULL THEN total_amount ELSE 0 END) AS "offlineSales"
 
       FROM quotations
       ${whereClause}
-      GROUP BY branch_id, month, DATE_TRUNC('month',"createdAt")
-      ORDER BY branch_id, DATE_TRUNC('month',"createdAt")
+      GROUP BY branch_id, month, DATE_TRUNC('month',"created_at")
+      ORDER BY branch_id, DATE_TRUNC('month',"created_at")
     `);
 
     // ===============================
@@ -2250,15 +2241,15 @@ const quickCards = await sequelize.query(`
     if (isSuperView) {
       const globalAnalytics = await sequelize.query(`
         SELECT
-          TO_CHAR("createdAt",'Mon') AS month,
-          DATE_TRUNC('month',"createdAt") AS "monthDate",
+          TO_CHAR("created_at",'Mon') AS month,
+          DATE_TRUNC('month',"created_at") AS "monthDate",
 
           SUM(CASE WHEN reference_no IS NOT NULL THEN total_amount ELSE 0 END) AS "onlineSales",
           SUM(CASE WHEN reference_no IS NULL THEN total_amount ELSE 0 END) AS "offlineSales"
 
         FROM quotations
-        GROUP BY month, DATE_TRUNC('month',"createdAt")
-        ORDER BY DATE_TRUNC('month',"createdAt")
+        GROUP BY month, DATE_TRUNC('month',"created_at")
+        ORDER BY DATE_TRUNC('month',"created_at")
       `);
 
       globalSalesAnalytics = globalAnalytics[0];
@@ -2355,14 +2346,14 @@ const quickCards = await sequelize.query(`
         c.name AS client,
         q.total_amount,
         q.status,
-        q."createdAt"
+        q."created_at"
 
       FROM quotations q
       LEFT JOIN clients c ON c.id = q.client_id
 
       ${isSuperView ? "" : branchId ? `WHERE q.branch_id = ${branchId}` : ""}
 
-      ORDER BY q."createdAt" DESC
+      ORDER BY q."created_at" DESC
       LIMIT 20
     `);
     let globalRecentActivity = [];
@@ -2375,12 +2366,12 @@ if (isSuperView) {
       c.name AS client,
       q.total_amount,
       q.status,
-      q."createdAt"
+      q."created_at"
 
     FROM quotations q
     LEFT JOIN clients c ON c.id = q.client_id
 
-    ORDER BY q."createdAt" DESC
+    ORDER BY q."created_at" DESC
     LIMIT 20
   `);
 
@@ -2656,7 +2647,7 @@ exports.getClientLedgerDetails = async (req, res) => {
         cl.invoice_no AS "transactionId",
         c.name AS "client",
         cl.branch_id AS "branchId",
-        TO_CHAR(cl."createdAt", 'DD/MM/YYYY, HH24:MI:SS') AS "dateTime",
+        TO_CHAR(cl."created_at", 'DD/MM/YYYY, HH24:MI:SS') AS "dateTime",
         COALESCE(cl.amount,0) AS "amount",
 
         CASE 
@@ -2678,7 +2669,7 @@ exports.getClientLedgerDetails = async (req, res) => {
       WHERE cl.client_id = :clientId
       ${branchFilter}
 
-      ORDER BY cl."createdAt" DESC
+      ORDER BY cl."created_at" DESC
     `, {
       replacements: { clientId }
     });
@@ -2860,7 +2851,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
         "id",
         "total_amount",
         "status",
-        "createdAt"
+        "created_at"
       ],
       include: [
         {
@@ -3325,7 +3316,7 @@ exports.getAllStatesDashboard = async (req, res) => {
     // =========================
     const salesTrend = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', "createdAt") AS week,
+        DATE_TRUNC('week', "created_at") AS week,
 
         SUM(CASE WHEN type='SALE' THEN quantity ELSE 0 END) AS sales,
         SUM(CASE WHEN type='PURCHASE' THEN quantity ELSE 0 END) AS purchase
@@ -3340,7 +3331,7 @@ exports.getAllStatesDashboard = async (req, res) => {
     // =========================
     const quotationTrend = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', "createdAt") AS week,
+        DATE_TRUNC('week', "created_at") AS week,
 
         COUNT(CASE WHEN status='pending' THEN 1 END) AS pending,
         COUNT(CASE WHEN status='rejected' THEN 1 END) AS rejected
@@ -3488,7 +3479,7 @@ exports.getStateDashboard = async (req, res) => {
         COALESCE(SUM(
           CASE 
             WHEN l.type='SALE' 
-            AND DATE_TRUNC('month', l."createdAt") = DATE_TRUNC('month', CURRENT_DATE)
+            AND DATE_TRUNC('month', l."created_at") = DATE_TRUNC('month', CURRENT_DATE)
             THEN l.quantity 
             ELSE 0 
           END
@@ -3512,7 +3503,7 @@ exports.getStateDashboard = async (req, res) => {
     // =========================
     const stockChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', l."createdAt") AS week,
+        DATE_TRUNC('week', l."created_at") AS week,
 
         SUM(CASE WHEN l.type='PURCHASE' THEN l.quantity ELSE 0 END) AS stockIn,
         SUM(CASE WHEN l.type='SALE' THEN l.quantity ELSE 0 END) AS stockOut
@@ -3534,7 +3525,7 @@ exports.getStateDashboard = async (req, res) => {
     // =========================
     const quotationChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', q."createdAt") AS week,
+        DATE_TRUNC('week', q."created_at") AS week,
 
         COUNT(CASE WHEN q.status='pending' THEN 1 END) AS pending,
         COUNT(CASE WHEN q.status='rejected' THEN 1 END) AS rejected
@@ -3669,7 +3660,7 @@ exports.getBranchDashboard = async (req, res) => {
         COALESCE(SUM(CASE WHEN type='SALE' THEN quantity ELSE 0 END),0) AS "totalSales",
 
         COALESCE(SUM(
-          CASE WHEN type='SALE' AND DATE_TRUNC('month', "createdAt") = DATE_TRUNC('month', CURRENT_DATE)
+          CASE WHEN type='SALE' AND DATE_TRUNC('month', "created_at") = DATE_TRUNC('month', CURRENT_DATE)
           THEN quantity ELSE 0 END
         ),0) AS "salesThisMonth",
 
@@ -3709,7 +3700,7 @@ exports.getBranchDashboard = async (req, res) => {
     // =========================
     const stockChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', "createdAt") AS week,
+        DATE_TRUNC('week', "created_at") AS week,
 
         SUM(CASE WHEN type='PURCHASE' THEN quantity ELSE 0 END) AS stockIn,
         SUM(CASE WHEN type='SALE' THEN quantity ELSE 0 END) AS stockOut
@@ -3729,7 +3720,7 @@ exports.getBranchDashboard = async (req, res) => {
     // =========================
     const quotationChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', "createdAt") AS week,
+        DATE_TRUNC('week', "created_at") AS week,
 
         COUNT(CASE WHEN status='pending' THEN 1 END) AS pending,
         COUNT(CASE WHEN status='rejected' THEN 1 END) AS rejected
@@ -3841,7 +3832,7 @@ exports.getItemDashboard = async (req, res) => {
 
     const stockChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', l."createdAt") AS week,
+        DATE_TRUNC('week', l."created_at") AS week,
 
         SUM(CASE WHEN l.type='SALE' THEN l.quantity ELSE 0 END) AS sales,
         SUM(CASE WHEN l.type='PURCHASE' THEN l.quantity ELSE 0 END) AS purchase
@@ -3858,7 +3849,7 @@ exports.getItemDashboard = async (req, res) => {
 
     const revenueChart = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('week', l."createdAt") AS week,
+        DATE_TRUNC('week', l."created_at") AS week,
 
         SUM(CASE WHEN l.type='SALE' THEN l.total ELSE 0 END) AS revenue,
         SUM(CASE WHEN l.type='PURCHASE' THEN l.total ELSE 0 END) AS cost
@@ -3876,7 +3867,7 @@ exports.getItemDashboard = async (req, res) => {
  
     const tableData = await sequelize.query(`
       SELECT 
-        l."createdAt" AS date,
+        l."created_at" AS date,
 
         l.reference_no AS "invoiceNumber",
 
@@ -3893,11 +3884,11 @@ exports.getItemDashboard = async (req, res) => {
 
         -- 🧠 AGING
         CASE 
-          WHEN AGE(NOW(), l."createdAt") < INTERVAL '30 days' THEN '1 month'
-          WHEN AGE(NOW(), l."createdAt") < INTERVAL '90 days' THEN '3 months'
-          WHEN AGE(NOW(), l."createdAt") < INTERVAL '180 days' THEN '6 months'
-          WHEN AGE(NOW(), l."createdAt") < INTERVAL '365 days' THEN '1 year'
-          WHEN AGE(NOW(), l."createdAt") < INTERVAL '730 days' THEN '2 years'
+          WHEN AGE(NOW(), l."created_at") < INTERVAL '30 days' THEN '1 month'
+          WHEN AGE(NOW(), l."created_at") < INTERVAL '90 days' THEN '3 months'
+          WHEN AGE(NOW(), l."created_at") < INTERVAL '180 days' THEN '6 months'
+          WHEN AGE(NOW(), l."created_at") < INTERVAL '365 days' THEN '1 year'
+          WHEN AGE(NOW(), l."created_at") < INTERVAL '730 days' THEN '2 years'
           ELSE '2+ years'
         END AS "aging"
 
@@ -3907,7 +3898,7 @@ exports.getItemDashboard = async (req, res) => {
 
       WHERE l.stock_id = :itemId
 
-      ORDER BY l."createdAt" DESC
+      ORDER BY l."created_at" DESC
       LIMIT 50
     `, {
       replacements: { itemId },
