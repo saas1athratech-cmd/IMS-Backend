@@ -38,7 +38,9 @@ const PasswordReset = sequelize.define(
     tableName: "password_resets",
       schema: "public",
     underscored: true,
-    timestamps: true
+    timestamps: true,
+      createdAt: "created_at",
+  updatedAt: "updated_at"
   }
 );
 

@@ -25,6 +25,8 @@ const StockMovement = sequelize.define(
     tableName: "stock_movements",
       schema: "public",
     underscored: true,
+      createdAt: "created_at",
+  updatedAt: "updated_at"
   }
 );
 

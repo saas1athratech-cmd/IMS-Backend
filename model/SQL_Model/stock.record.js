@@ -74,6 +74,8 @@ const Stock = sequelize.define(
     tableName: "stocks",
       schema: "public",
     underscored: true,
+      createdAt: "created_at",
+  updatedAt: "updated_at"
   }
 );
 

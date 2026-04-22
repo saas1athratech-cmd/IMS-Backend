@@ -41,7 +41,9 @@ const ClientLedger = sequelize.define("ClientLedger", {
 }, {
   tableName: "client_ledger",
     schema: "public",
-  timestamps: true
+  timestamps: true,
+    createdAt: "created_at",
+  updatedAt: "updated_at"
 });
 
 module.exports = ClientLedger;

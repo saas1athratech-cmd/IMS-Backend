@@ -58,7 +58,9 @@ const SystemSetting = sequelize.define(
     tableName: "system_settings",
       schema: "public",
     underscored: true,
-    timestamps: true
+    timestamps: true,
+      createdAt: "created_at",
+  updatedAt: "updated_at"
   }
 );
 

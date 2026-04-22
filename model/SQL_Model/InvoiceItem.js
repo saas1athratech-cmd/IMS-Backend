@@ -16,7 +16,12 @@ const InvoiceItem = sequelize.define("InvoiceItem", {
 }, {
   tableName: "invoice_items",
     schema: "public",
-  timestamps: true
+  timestamps: true,
+  
+
+  createdAt: "created_at",
+  updatedAt: "updated_at"
+
 });
 
 module.exports = InvoiceItem;

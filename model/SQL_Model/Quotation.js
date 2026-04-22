@@ -13,11 +13,10 @@ const Quotation = sequelize.define("Quotation", {
   notes: DataTypes.TEXT,
 
   status: {
-    type: DataTypes.ENUM("pending","approved","rejected","invoiced"),
+    type: DataTypes.ENUM("pending", "approved", "rejected", "invoiced"),
     defaultValue: "pending"
   },
 
-  // 🔥 NEW FIELDS (ADD ONLY THIS)
   approved_by: {
     type: DataTypes.INTEGER,
     allowNull: true
@@ -27,14 +26,16 @@ const Quotation = sequelize.define("Quotation", {
     type: DataTypes.DATE,
     allowNull: true
   }
-
-},{
-  tableName:"quotations",
-    schema: "public",
-  timestamps:true
+}, {
+  tableName: "quotations",
+  schema: "public",
+  timestamps: true,
+  underscored: true,
+  createdAt: "created_at",
+  updatedAt: "updated_at"
 });
 
-const QuotationItem = sequelize.define("QuotationItem",{
+const QuotationItem = sequelize.define("QuotationItem", {
   quotation_id: DataTypes.INTEGER,
   product_name: DataTypes.STRING,
   quantity: DataTypes.INTEGER,
@@ -45,23 +46,25 @@ const QuotationItem = sequelize.define("QuotationItem",{
   sgst: DataTypes.FLOAT,
   subtotal: DataTypes.FLOAT,
   amount: DataTypes.FLOAT
-},{
-  tableName:"quotation_items",
-    schema: "public",
-  timestamps:true
+}, {
+  tableName: "quotation_items",
+  schema: "public",
+  timestamps: true,
+  underscored: true,
+  createdAt: "created_at",
+  updatedAt: "updated_at"
 });
-
 
 /* ASSOCIATIONS */
 
-Quotation.hasMany(QuotationItem,{
-  foreignKey:"quotation_id",
-  as:"items"
+Quotation.hasMany(QuotationItem, {
+  foreignKey: "quotation_id",
+  as: "items"
 });
 
-QuotationItem.belongsTo(Quotation,{
-  foreignKey:"quotation_id",
-  as:"parentQuotation"
+QuotationItem.belongsTo(Quotation, {
+  foreignKey: "quotation_id",
+  as: "parentQuotation"
 });
 
 module.exports = {
