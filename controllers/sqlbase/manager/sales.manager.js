@@ -156,6 +156,8 @@ async function createInvoiceFromQuotation(quotationId, transaction) {
 
 
 const getOrCreateClient = async (data, t) => {
+  const clientName = data.company_name || data.name || data.contact_person || "";
+
   let client = await Client.findOne({
     where: {
       phone: data.phone,
@@ -183,12 +185,12 @@ const getOrCreateClient = async (data, t) => {
 
   client = await Client.create(
     {
-      name: data.name || "",
+      name: clientName,
       phone: data.phone || null,
       email: data.email || null,
       address: data.address || null,
-      branch_id: data.branch_id,
       gst_number: data.gst_number || null,
+      branch_id: data.branch_id,
       client_code: code
     },
     { transaction: t }
@@ -211,13 +213,6 @@ exports.createClient = async (req, res) => {
 
     const branch_id = req.user.branch_id;
 
-    if (!company_name) {
-      await t.rollback();
-      return res.status(400).json({
-        error: "Company name required"
-      });
-    }
-
     const lastClient = await Client.findOne({
       where: { branch_id },
       order: [["created_at", "DESC"]],
@@ -228,19 +223,23 @@ exports.createClient = async (req, res) => {
     let nextNumber = 1;
 
     if (lastClient?.client_code) {
-      const lastNumber = parseInt(lastClient.client_code.split("-")[1]);
-      nextNumber = lastNumber + 1;
+      const lastNumber = parseInt(lastClient.client_code.split("-")[1], 10);
+      if (!isNaN(lastNumber)) {
+        nextNumber = lastNumber + 1;
+      }
     }
 
     const client_code = `BR${branch_id}-${String(nextNumber).padStart(4, "0")}`;
 
     const client = await Client.create(
       {
+        // ✅ sabse important fix
         name: company_name || contact_person || "",
-        phone,
-        email,
-        address,
-        gst_number,
+
+        phone: phone || null,
+        email: email || null,
+        address: address || null,
+        gst_number: gst_number || null,
         branch_id,
         client_code
       },
@@ -249,14 +248,15 @@ exports.createClient = async (req, res) => {
 
     await t.commit();
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Client created successfully",
       client
     });
+
   } catch (err) {
     await t.rollback();
 
-    res.status(500).json({
+    return res.status(500).json({
       error: err.message
     });
   }
@@ -2051,6 +2051,81 @@ exports.listQuotations = async (req, res) => {
     });
   } catch (err) {
     console.error("listQuotations error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
+exports.getQuotationPdf = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const type = String(req.query.type || "view").toLowerCase();
+
+    const quotation = await Quotation.findByPk(id, {
+      include: [
+        { model: Client, as: "client" },
+        { model: Branch, as: "branch" },
+        { model: QuotationItem, as: "items" }
+      ]
+    });
+
+    if (!quotation) {
+      return res.status(404).json({
+        success: false,
+        error: "Quotation not found"
+      });
+    }
+
+    const doc = new PDFDocument({ margin: 30 });
+
+    const disposition =
+      type === "download" ? "attachment" : "inline";
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `${disposition}; filename=${quotation.quotation_no}.pdf`
+    );
+
+    doc.pipe(res);
+
+    // =========================
+    // HEADER
+    // =========================
+    doc.fontSize(16).text(quotation.branch?.name || "", {
+      align: "center"
+    });
+
+    doc.moveDown();
+
+    // =========================
+    // QUOTATION DETAILS
+    // =========================
+    doc.fontSize(10);
+    doc.text(`Quotation No: ${quotation.quotation_no}`);
+    doc.text(`Client: ${quotation.client?.name || ""}`);
+
+    doc.moveDown();
+
+    // =========================
+    // ITEMS
+    // =========================
+    (quotation.items || []).forEach((it, i) => {
+      doc.text(
+        `${i + 1}. ${it.product_name} - ${it.quantity} x ${it.unit_price}`
+      );
+    });
+
+    doc.moveDown();
+
+    // =========================
+    // TOTAL
+    // =========================
+    doc.text(`Total: ${quotation.total_amount}`);
+
+    doc.end();
+  } catch (err) {
     return res.status(500).json({
       success: false,
       error: err.message
