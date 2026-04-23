@@ -9,6 +9,7 @@ const Sentry = require("@sentry/node");
 const app = express();
 
 const { initDB } = require("./model/SQL_Model");
+const { connectRedis } = require("./config/redis"); // ✅ REDIS ADD
 
 // CORS Policy
 const corsOptions = {
@@ -39,7 +40,7 @@ app.use("/api/stock", require("./routes/stock"));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/profile", require("./routes/userRoutes"));
 
-// sql base route
+// SQL base routes
 app.use("/sql", require("./routes/sql/sqlauth"));
 app.use("/sqlstock", require("./routes/sql/stock.sql"));
 app.use("/hrrole", require("./routes/sql/sqlhr.route"));
@@ -86,11 +87,17 @@ async function startServer() {
     await initDB();
     console.log("✅ SQL DB initialized");
 
-    // Start server only after both DBs are ready
+    // ✅ REDIS CONNECTION
+    await connectRedis();
+    console.log("✅ Redis connected");
+
+    // Start server only after all services are ready
     const PORT = process.env.PORT || 8000;
+
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
+
   } catch (error) {
     console.error("❌ Server startup failed:", error);
     Sentry.captureException(error);
