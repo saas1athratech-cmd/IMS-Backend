@@ -23,7 +23,7 @@ router.get("/get", auth, checkRole(["sales_manager","admin","finance","super_sto
 router.get('/report-all',auth, checkRole(["sales_manager","admin","super_sales_manager"]), salemanager.reportandanalysis)
 router.put("/approve/:id",auth,checkRole(["sales_manager","super_admin", "super_sales_manager"]),salemanager.approveQuotation);
 router.get('/dashbord',auth,checkRole(["sales_manager","super_admin", "super_sales_manager"]),salemanager.getAdvancedSalesAnalytics)
-
+router.get("/quotation/:id/pdf",auth,checkRole(["sales_manager","super_admin", "super_sales_manager"]),salemanager. getQuotationPdf);
 //Ladger-screen-entries
 router.get('/get-ladger',auth,checkRole(["sales_manager","super_admin", "super_sales_manager","inventory_manager","super_inventory_manager"]),salemanager.getClientLedgerSummary)
 //Ladger-screen-entries
