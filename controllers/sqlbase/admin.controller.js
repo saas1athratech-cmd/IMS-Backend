@@ -611,31 +611,9 @@ exports.getAdminDashboard = async (req, res) => {
 };
 
 // const { Branch, User, Stock, sequelize } = require("../../model/SQL_Model");
-
 exports.getSuperAdminDashboard = async (req, res) => {
   try {
     const user = req.user;
-
-    // =========================
-    // 🔑 CACHE KEY
-    // =========================
-    const cacheKey = `dashboard:${user.role}:${user.branch_id || "all"}:${user.id}`;
-
-    // =========================
-    // ⚡ REDIS CACHE CHECK
-    // =========================
-    try {
-      const cachedData = await redisClient.get(cacheKey);
-
-      if (cachedData) {
-        console.log("✅ Dashboard data coming from REDIS");
-        return res.json(JSON.parse(cachedData)); // ✅ SAME RESPONSE TYPE
-      }
-    } catch (redisError) {
-      console.error("REDIS GET ERROR:", redisError.message);
-    }
-
-    console.log("✅ Dashboard data coming from DB");
 
     // =========================
     // 🔧 COLUMN RESOLVER (DEV + PROD SAFE)
@@ -885,7 +863,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
     // =========================
     // ✅ FINAL RESPONSE
     // =========================
-    const responseData = {
+    return res.json({
       stats: {
         totalUsers,
         totalStock,
@@ -900,20 +878,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
       stockDistribution,
       branchOverview,
       recentActivities
-    };
-
-    // =========================
-    // ⚡ SAVE TO REDIS
-    // =========================
-    try {
-      await redisClient.set(cacheKey, JSON.stringify(responseData));
-      console.log("✅ Dashboard data saved in REDIS");
-    } catch (redisError) {
-      console.error("REDIS SET ERROR:", redisError.message);
-    }
-
-    // ✅ SAME RESPONSE SHAPE
-    return res.json(responseData);
+    });
   } catch (err) {
     console.error("DASHBOARD ERROR:", err);
     res.status(500).json({ error: err.message });
