@@ -22,7 +22,7 @@ const { quotationHTML } = require("../../../utils/qt");
 // const { generateGSTInvoicePDF } = require("../../../utils/invoice");
 const { generateIRN } = require("../../../utils/taxproService");
 const { generateEinvoicePayload } = require("../../../utils/einvoicePayload");
-
+const { getOrSetCache } = require("../../../utils/redis/cache");
 
 // ✅ Add this
 const { createClient } = require("@supabase/supabase-js");
@@ -156,7 +156,6 @@ async function createInvoiceFromQuotation(quotationId, transaction) {
 
 
 const getOrCreateClient = async (data, t) => {
-
   let client = await Client.findOne({
     where: {
       phone: data.phone,
@@ -170,28 +169,30 @@ const getOrCreateClient = async (data, t) => {
   const last = await Client.findOne({
     where: { branch_id: data.branch_id },
     order: [["created_at", "DESC"]],
-    transaction: t
+    transaction: t,
+    lock: t.LOCK.UPDATE
   });
 
   let next = 1;
 
   if (last?.client_code) {
-    next =
-      Number(last.client_code.split("-")[1]) + 1;
+    next = Number(last.client_code.split("-")[1]) + 1;
   }
 
-  const code =
-    `BR${data.branch_id}-${String(next).padStart(4, "0")}`;
+  const code = `BR${data.branch_id}-${String(next).padStart(4, "0")}`;
 
-  client = await Client.create({
-    name: data.name,
-    phone: data.phone,
-    email: data.email,
-    address: data.address,
-    branch_id: data.branch_id,
-    gst_number: data.gst_number,
-    client_code: code
-  }, { transaction: t });
+  client = await Client.create(
+    {
+      name: data.name || "",
+      phone: data.phone || null,
+      email: data.email || null,
+      address: data.address || null,
+      branch_id: data.branch_id,
+      gst_number: data.gst_number || null,
+      client_code: code
+    },
+    { transaction: t }
+  );
 
   return client;
 };
@@ -200,14 +201,12 @@ exports.createClient = async (req, res) => {
 
   try {
     const {
-      client_type,
       company_name,
       contact_person,
       phone,
       email,
       address,
-      city,
-      country
+      gst_number
     } = req.body;
 
     const branch_id = req.user.branch_id;
@@ -218,10 +217,6 @@ exports.createClient = async (req, res) => {
         error: "Company name required"
       });
     }
-
-    // =========================
-    // CLIENT CODE GENERATION
-    // =========================
 
     const lastClient = await Client.findOne({
       where: { branch_id },
@@ -239,20 +234,13 @@ exports.createClient = async (req, res) => {
 
     const client_code = `BR${branch_id}-${String(nextNumber).padStart(4, "0")}`;
 
-    // =========================
-    // CREATE CLIENT
-    // =========================
-
     const client = await Client.create(
       {
-        client_type,
-        company_name,
-        contact_person,
+        name: company_name || contact_person || "",
         phone,
         email,
         address,
-        city,
-        country,
+        gst_number,
         branch_id,
         client_code
       },
@@ -273,47 +261,35 @@ exports.createClient = async (req, res) => {
     });
   }
 };
-
 exports.listClients = async (req, res) => {
   try {
     const { search = "", branch_id } = req.query;
 
     const user = req.user;
 
-    // role name nikal
     const roleName = user.role?.name || user.role;
 
     let where = {};
 
-    // =========================
-    // 🔐 ROLE BASED FILTER
-    // =========================
-
-    // 👑 SUPER SALES MANAGER → ALL DATA
     if (roleName !== "super_sales_manager") {
       where.branch_id = user.branch_id;
     }
 
-    // optional branch filter (only super)
     if (branch_id && roleName === "super_sales_manager") {
       where.branch_id = branch_id;
     }
 
-    // =========================
-    // 🔍 SEARCH
-    // =========================
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
         { phone: { [Op.iLike]: `%${search}%` } },
         { email: { [Op.iLike]: `%${search}%` } },
-        { address: { [Op.iLike]: `%${search}%` } }
+        { address: { [Op.iLike]: `%${search}%` } },
+        { client_code: { [Op.iLike]: `%${search}%` } },
+        { gst_number: { [Op.iLike]: `%${search}%` } }
       ];
     }
 
-    // =========================
-    // 📦 FETCH DATA
-    // =========================
     const clients = await Client.findAll({
       where,
       include: [
@@ -326,9 +302,6 @@ exports.listClients = async (req, res) => {
       order: [["created_at", "DESC"]]
     });
 
-    // =========================
-    // 🧠 RESPONSE FORMAT
-    // =========================
     const formatted = clients.map((c) => ({
       id: c.id,
       client_code: c.client_code,
@@ -336,11 +309,12 @@ exports.listClients = async (req, res) => {
       phone: c.phone,
       email: c.email,
       address: c.address,
-
+      gst_number: c.gst_number,
+      credit_limit: c.credit_limit,
       branch_id: c.branch_id,
       branch_name: c.branch?.name || null,
-
-      created_at: c.created_at
+      created_at: c.created_at,
+      updated_at: c.updated_at
     }));
 
     res.json({
@@ -353,42 +327,51 @@ exports.listClients = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.createQuotation = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
     const { client, products, gst_percent = 0, valid_till } = req.body;
-
     const branch_id = req.user.branch_id;
 
-    if (!products || products.length === 0) {
+    if (!branch_id) {
+      if (!t.finished) await t.rollback();
+      return res.status(400).json({
+        error: "branch_id missing in req.user",
+      });
+    }
+
+    if (!products || !Array.isArray(products) || products.length === 0) {
       if (!t.finished) await t.rollback();
       return res.status(400).json({ error: "Products are required" });
     }
 
-    // ================= CLIENT =================
     const clientData = await getOrCreateClient({ ...client, branch_id }, t);
 
-    // ================= STOCK VALIDATION =================
     for (const p of products) {
       const stock = await Stock.findOne({
-        where: { item: p.product_name, branch_id },
+        where: {
+          item: p.product_name,
+          branch_id,
+        },
         transaction: t,
       });
 
       if (!stock) {
         if (!t.finished) await t.rollback();
-        return res.status(400).json({ error: `Stock not found for ${p.product_name}` });
+        return res.status(400).json({
+          error: `Stock not found for ${p.product_name}`,
+        });
       }
 
-      if (stock.quantity < p.quantity) {
+      if (Number(stock.quantity || 0) < Number(p.quantity || 0)) {
         if (!t.finished) await t.rollback();
-        return res.status(400).json({ error: `Not enough stock for ${p.product_name}` });
+        return res.status(400).json({
+          error: `Not enough stock for ${p.product_name}`,
+        });
       }
     }
 
-    // ================= QUOTATION NO =================
     const last = await Quotation.findOne({
       where: { branch_id },
       order: [["created_at", "DESC"]],
@@ -397,23 +380,25 @@ exports.createQuotation = async (req, res) => {
     });
 
     let next = 1;
+
     if (last?.quotation_no) {
-      const parts = last.quotation_no.split("-");
-      next = Number(parts[2]) + 1;
+      const parts = String(last.quotation_no).split("-");
+      const parsed = Number(parts[2]);
+      if (!isNaN(parsed)) {
+        next = parsed + 1;
+      }
     }
 
     const quotation_no = `QT-${branch_id}-${String(next).padStart(4, "0")}`;
 
-    // ================= TOTAL =================
     let subtotal = 0;
     for (const p of products) {
-      subtotal += p.quantity * p.unit_price;
+      subtotal += Number(p.quantity || 0) * Number(p.unit_price || 0);
     }
 
-    const gst_amount = (subtotal * gst_percent) / 100;
+    const gst_amount = (subtotal * Number(gst_percent || 0)) / 100;
     const grand_total = subtotal + gst_amount;
 
-    // ================= CREATE QUOTATION =================
     const quotation = await Quotation.create(
       {
         quotation_no,
@@ -427,12 +412,10 @@ exports.createQuotation = async (req, res) => {
       { transaction: t }
     );
 
-    // ================= ITEMS =================
     for (const p of products) {
-      const itemTotal = p.quantity * p.unit_price;
-
-      const cgst = (itemTotal * gst_percent) / 200;
-      const sgst = (itemTotal * gst_percent) / 200;
+      const itemTotal = Number(p.quantity || 0) * Number(p.unit_price || 0);
+      const cgst = (itemTotal * Number(gst_percent || 0)) / 200;
+      const sgst = (itemTotal * Number(gst_percent || 0)) / 200;
 
       await QuotationItem.create(
         {
@@ -454,28 +437,31 @@ exports.createQuotation = async (req, res) => {
 
     await t.commit();
 
-    // ================= FETCH DATA =================
     const branch = await Branch.findByPk(branch_id);
 
     const items = await QuotationItem.findAll({
       where: { quotation_id: quotation.id },
+      order: [["id", "ASC"]],
     });
 
-    // ================= PDF WITH PDFKIT =================
     const doc = new PDFDocument({ margin: 30 });
+
+    // ✅ view / download support
+    const type = String(req.query.type || "download").toLowerCase();
+    const disposition = type === "view" ? "inline" : "attachment";
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `inline; filename=${quotation_no}.pdf`
+      `${disposition}; filename=${quotation_no}.pdf`
     );
 
     doc.pipe(res);
 
     // HEADER
-    doc.fontSize(16).text(branch.name || "", { align: "center" });
-    doc.fontSize(10).text(branch.address || "", { align: "center" });
-    doc.text(`GST: ${branch.gst || ""}`, { align: "center" });
+    doc.fontSize(16).text(branch?.name || "", { align: "center" });
+    doc.fontSize(10).text(branch?.address || "", { align: "center" });
+    doc.text(`GST: ${branch?.gst || ""}`, { align: "center" });
     doc.moveDown();
 
     doc.fontSize(14).text("QUOTATION", { align: "center" });
@@ -486,33 +472,53 @@ exports.createQuotation = async (req, res) => {
     doc.text(`Quotation No: ${quotation.quotation_no}`);
     doc.text(`Date: ${new Date(quotation.created_at).toDateString()}`);
     doc.text(`Status: ${quotation.status}`);
+    if (quotation.valid_till) {
+      doc.text(`Valid Till: ${new Date(quotation.valid_till).toDateString()}`);
+    }
     doc.moveDown();
 
-    doc.text(`Billing To:`);
-    doc.text(`${clientData.name}`);
-    doc.text(`${clientData.address}`);
+    doc.text("Billing To:");
+    doc.text(`${clientData.name || ""}`);
+    doc.text(`${clientData.address || ""}`);
+    if (clientData.phone) doc.text(`Phone: ${clientData.phone}`);
+    if (clientData.email) doc.text(`Email: ${clientData.email}`);
     doc.moveDown();
 
     // TABLE HEADER
-    doc.text("No  Item  Qty  Rate  Total");
+    doc.font("Helvetica-Bold");
+    let y = doc.y;
+    doc.text("No", 30, y);
+    doc.text("Item", 60, y);
+    doc.text("Qty", 260, y);
+    doc.text("Rate", 320, y);
+    doc.text("Total", 420, y);
     doc.moveDown();
+    doc.font("Helvetica");
 
     // ITEMS
     items.forEach((it, i) => {
-      doc.text(
-        `${i + 1}  ${it.product_name}  ${it.quantity}  ${it.unit_price}  ${it.amount}`
-      );
+      const rowY = doc.y;
+      doc.text(String(i + 1), 30, rowY);
+      doc.text(String(it.product_name || ""), 60, rowY, { width: 180 });
+      doc.text(String(it.quantity || 0), 260, rowY);
+      doc.text(String(it.unit_price || 0), 320, rowY);
+      doc.text(String(it.amount || 0), 420, rowY);
+      doc.moveDown();
     });
 
     doc.moveDown(2);
 
-    // TOTAL
-    doc.text(`Subtotal: ${subtotal}`);
-    doc.text(`GST: ${gst_amount}`);
-    doc.text(`Grand Total: ${grand_total}`);
+    // TOTALS
+    doc.font("Helvetica-Bold");
+    doc.text(`Subtotal: ${subtotal}`, { align: "right" });
+    doc.text(`GST: ${gst_amount}`, { align: "right" });
+    doc.text(`Grand Total: ${grand_total}`, { align: "right" });
+    doc.font("Helvetica");
+
+    doc.moveDown(2);
+    doc.text("Thank you!", { align: "center" });
 
     doc.end();
-
   } catch (err) {
     try {
       if (!t.finished) await t.rollback();
@@ -520,14 +526,14 @@ exports.createQuotation = async (req, res) => {
       console.error("Rollback failed:", rollbackErr);
     }
 
-    console.error(err);
+    console.error("createQuotation error:", err);
+
     return res.status(500).json({
       message: "Something went wrong!",
       error: err.message,
     });
   }
 };
-
 exports.getQuotationProducts = async (req, res) => {
   try {
     const branch_id = req.user?.branch_id;

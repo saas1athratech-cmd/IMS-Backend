@@ -4,7 +4,7 @@ const { Branch, User, Role, Stock, sequelize, Ledger,  ClientLedger,
 const { Op } = require("sequelize");
 const StockMovement = require("../../model/SQL_Model/stockmovement");
 const bcrypt = require("bcryptjs");
-
+const { redisClient } = require("../../config/redis");
 const { encryptPassword } = require("../../utils/crypto"); 
 const { decryptPassword } = require("../../utils/crypto");
 function getDateFilter(range) {
@@ -617,19 +617,38 @@ exports.getSuperAdminDashboard = async (req, res) => {
     const user = req.user;
 
     // =========================
+    // 🔑 CACHE KEY
+    // =========================
+    const cacheKey = `dashboard:${user.role}:${user.branch_id || "all"}:${user.id}`;
+
+    // =========================
+    // ⚡ REDIS CACHE CHECK
+    // =========================
+    try {
+      const cachedData = await redisClient.get(cacheKey);
+
+      if (cachedData) {
+        console.log("✅ Dashboard data coming from REDIS");
+        return res.json(JSON.parse(cachedData)); // ✅ SAME RESPONSE TYPE
+      }
+    } catch (redisError) {
+      console.error("REDIS GET ERROR:", redisError.message);
+    }
+
+    console.log("✅ Dashboard data coming from DB");
+
+    // =========================
     // 🔧 COLUMN RESOLVER (DEV + PROD SAFE)
     // =========================
     const resolveColumn = (Model, candidates = []) => {
       const attrs = Model?.rawAttributes || {};
 
-      // 1) direct attribute match
       for (const key of candidates) {
         if (attrs[key]) {
           return attrs[key].field || key;
         }
       }
 
-      // 2) actual DB field match
       for (const key of candidates) {
         for (const attrName of Object.keys(attrs)) {
           const attr = attrs[attrName];
@@ -639,7 +658,6 @@ exports.getSuperAdminDashboard = async (req, res) => {
         }
       }
 
-      // 3) fallback
       return candidates[0];
     };
 
@@ -668,10 +686,26 @@ exports.getSuperAdminDashboard = async (req, res) => {
     // 🔹 TOP STATS
     // =========================
     const totalUsers = isSuperAdmin
-      ? await User.count()
-      : await User.count({ where: { branch_id: user.branch_id } });
+      ? await User.count({
+          where: { is_active: true }
+        })
+      : await User.count({
+          where: {
+            branch_id: user.branch_id,
+            is_active: true
+          }
+        });
 
-    const totalBranches = isSuperAdmin ? await Branch.count() : 1;
+    const totalBranches = isSuperAdmin
+      ? await Branch.count({
+          where: { status: "ACTIVE" }
+        })
+      : await Branch.count({
+          where: {
+            id: user.branch_id,
+            status: "ACTIVE"
+          }
+        });
 
     const totalStock =
       (await Stock.sum("quantity", { where: branchFilter })) || 0;
@@ -764,6 +798,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
             "purchase"
           ]
         ],
+        where: { status: "ACTIVE" },
         include: [
           {
             model: Stock,
@@ -796,7 +831,9 @@ exports.getSuperAdminDashboard = async (req, res) => {
     });
 
     const userActivities = await User.findAll({
-      where: isSuperAdmin ? {} : { branch_id: user.branch_id },
+      where: isSuperAdmin
+        ? { is_active: true }
+        : { branch_id: user.branch_id, is_active: true },
       limit: 2,
       order: [[sequelize.col(userCreatedCol), "DESC"]],
       raw: true
@@ -848,7 +885,7 @@ exports.getSuperAdminDashboard = async (req, res) => {
     // =========================
     // ✅ FINAL RESPONSE
     // =========================
-    res.json({
+    const responseData = {
       stats: {
         totalUsers,
         totalStock,
@@ -863,13 +900,25 @@ exports.getSuperAdminDashboard = async (req, res) => {
       stockDistribution,
       branchOverview,
       recentActivities
-    });
+    };
+
+    // =========================
+    // ⚡ SAVE TO REDIS
+    // =========================
+    try {
+      await redisClient.set(cacheKey, JSON.stringify(responseData));
+      console.log("✅ Dashboard data saved in REDIS");
+    } catch (redisError) {
+      console.error("REDIS SET ERROR:", redisError.message);
+    }
+
+    // ✅ SAME RESPONSE SHAPE
+    return res.json(responseData);
   } catch (err) {
     console.error("DASHBOARD ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 };
-
 
 exports.getBranchAnalytics = async (req, res) => {
   try {
@@ -1440,10 +1489,30 @@ exports.getLocationWiseSummary = async (req, res) => {
 
 exports.getReportsAnalytics = async (req, res) => {
   try {
-
     // 🔹 USER INFO
-    const { role, branches } = req.user;
+    const { role, branches, id, branch_id } = req.user;
     const isSuperAdmin = role === "super_admin";
+
+    // =========================
+    // 🔑 CACHE KEY
+    // =========================
+    const cacheKey = `reports:analytics:${role}:${branch_id || "all"}:${id}`;
+
+    // =========================
+    // ⚡ REDIS CACHE CHECK
+    // =========================
+    try {
+      const cachedData = await redisClient.get(cacheKey);
+
+      if (cachedData) {
+        console.log("✅ Reports analytics data coming from REDIS");
+        return res.json(JSON.parse(cachedData));
+      }
+    } catch (redisError) {
+      console.error("REDIS GET ERROR:", redisError.message);
+    }
+
+    console.log("✅ Reports analytics data coming from DB");
 
     // =========================
     // 🔹 FILTERS
@@ -1465,7 +1534,6 @@ exports.getReportsAnalytics = async (req, res) => {
     const trendRaw = await Ledger.findAll({
       attributes: [
         [sequelize.col("branch.name"), "branch"],
-
         [
           sequelize.fn(
             "SUM",
@@ -1479,7 +1547,6 @@ exports.getReportsAnalytics = async (req, res) => {
           ),
           "sales"
         ],
-
         [
           sequelize.fn(
             "SUM",
@@ -1494,7 +1561,6 @@ exports.getReportsAnalytics = async (req, res) => {
           "purchase"
         ]
       ],
-
       include: [
         {
           model: Branch,
@@ -1503,7 +1569,6 @@ exports.getReportsAnalytics = async (req, res) => {
           required: true
         }
       ],
-
       where: ledgerWhere,
       group: ["branch.name"],
       raw: true
@@ -1521,7 +1586,6 @@ exports.getReportsAnalytics = async (req, res) => {
     const scrapRaw = await Stock.findAll({
       attributes: [
         "category",
-
         [
           sequelize.fn(
             "SUM",
@@ -1535,7 +1599,6 @@ exports.getReportsAnalytics = async (req, res) => {
           ),
           "repairable"
         ],
-
         [
           sequelize.fn(
             "SUM",
@@ -1550,7 +1613,6 @@ exports.getReportsAnalytics = async (req, res) => {
           "scrap"
         ]
       ],
-
       where: stockWhere,
       group: ["category"],
       raw: true
@@ -1570,7 +1632,6 @@ exports.getReportsAnalytics = async (req, res) => {
         "category",
         [sequelize.fn("SUM", sequelize.col("quantity")), "total"]
       ],
-
       where: stockWhere,
       group: ["category"],
       raw: true
@@ -1585,7 +1646,7 @@ exports.getReportsAnalytics = async (req, res) => {
       name: t.category,
       value: Number(t.total),
       percentage: totalQty
-        ? ((t.total / totalQty) * 100).toFixed(1)
+        ? ((Number(t.total) / totalQty) * 100).toFixed(1)
         : 0
     }));
 
@@ -1626,13 +1687,24 @@ exports.getReportsAnalytics = async (req, res) => {
     // =========================
     // ✅ FINAL RESPONSE
     // =========================
-    res.json({
+    const responseData = {
       trendChart,
       scrapChart,
       transitChart,
       reports
-    });
+    };
 
+    // =========================
+    // ⚡ SAVE TO REDIS
+    // =========================
+    try {
+      await redisClient.set(cacheKey, JSON.stringify(responseData));
+      console.log("✅ Reports analytics data saved in REDIS");
+    } catch (redisError) {
+      console.error("REDIS SET ERROR:", redisError.message);
+    }
+
+    return res.json(responseData);
   } catch (err) {
     console.error("REPORT DASHBOARD ERROR:", err);
     res.status(500).json({ error: err.message });
@@ -1933,6 +2005,8 @@ exports.getItemDashboard = async (req, res) => {
 };
 
 exports.toggleBranchStatus = async (req, res) => {
+  const t = await sequelize.transaction();
+
   try {
     let { id } = req.params;
 
@@ -1942,40 +2016,55 @@ exports.toggleBranchStatus = async (req, res) => {
     id = Number(id);
 
     if (!id || isNaN(id)) {
+      await t.rollback();
       return res.status(400).json({
         success: false,
         message: "Invalid branch id"
       });
     }
 
-    const branch = await Branch.findByPk(id);
+    const branch = await Branch.findByPk(id, { transaction: t });
 
     console.log("👉 Found Branch:", branch);
 
     if (!branch) {
+      await t.rollback();
       return res.status(404).json({
         success: false,
         message: "Branch not found"
       });
     }
 
-    // 🔁 TOGGLE
-    const newStatus =
-      branch.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    // 🔁 TOGGLE BRANCH STATUS
+    const newStatus = branch.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
 
     branch.status = newStatus;
-    await branch.save();
+    await branch.save({ transaction: t });
+
+    // ✅ BRANCH KE SAARE USERS KO BHI ACTIVATE / DEACTIVATE KAR DO
+    const userActiveStatus = newStatus === "ACTIVE";
+
+    await User.update(
+      { is_active: userActiveStatus },
+      {
+        where: { branch_id: id },
+        transaction: t
+      }
+    );
+
+    await t.commit();
 
     return res.json({
       success: true,
       message:
         newStatus === "ACTIVE"
-          ? "Branch Activated successfully"
-          : "Branch Deactivated successfully",
+          ? "Branch Activated successfully and all branch users activated"
+          : "Branch Deactivated successfully and all branch users deactivated",
       branch
     });
 
   } catch (err) {
+    await t.rollback();
     console.error("❌ ERROR:", err);
 
     return res.status(500).json({
