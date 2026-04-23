@@ -460,7 +460,6 @@ exports.exportReportsAnalyticsCSV = async (req, res) => {
 
 exports.exportClientsExcel = async (req, res) => {
   try {
-
     const user = req.user;
     const role = user?.role || user?.role?.name;
     const userBranches = user?.branches || [];
@@ -487,26 +486,26 @@ exports.exportClientsExcel = async (req, res) => {
     // ================= DATA =================
     const [clients] = await sequelize.query(`
       SELECT
-      c.name AS "vendorName",
-      c.email,
-      c.phone,
-      c.gst_number AS "gstNumber",
+        c.name AS "vendorName",
+        c.email,
+        c.phone,
+        c.gst_number AS "gstNumber",
 
-      COALESCE(SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END),0) AS "totalAmount",
+        COALESCE(SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END),0) AS "totalAmount",
 
-      COALESCE(
-        SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END) -
-        SUM(CASE WHEN l.type='PAYMENT' THEN l.amount ELSE 0 END)
-      ,0) AS "pendingAmount"
+        COALESCE(
+          SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END) -
+          SUM(CASE WHEN l.type='PAYMENT' THEN l.amount ELSE 0 END)
+        ,0) AS "pendingAmount"
 
       FROM clients c
       LEFT JOIN client_ledger l
-      ON l.client_id = c.id
-      ${isSuperUser ? "" : "AND l.branch_id = :branchId"}
+        ON l.client_id = c.id
+        ${isSuperUser ? "" : "AND l.branch_id = :branchId"}
       ${branchFilter}
 
-      GROUP BY c.id
-      ORDER BY c."createdAt" DESC
+      GROUP BY c.id, c.name, c.email, c.phone, c.gst_number, c.created_at
+      ORDER BY c.created_at DESC
     `, { replacements });
 
     if (!clients.length) {
@@ -520,7 +519,7 @@ exports.exportClientsExcel = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Clients Report");
 
-    // 🔥 TOP INFO (same as inventory)
+    // 🔥 TOP INFO
     worksheet.addRow(["User Role:", role]);
     worksheet.addRow([
       "Branch Access:",
@@ -543,7 +542,7 @@ exports.exportClientsExcel = async (req, res) => {
     worksheet.getRow(5).font = { bold: true };
 
     // 🔥 DATA
-    clients.forEach(c => {
+    clients.forEach((c) => {
       worksheet.addRow({
         vendorName: c.vendorName || "",
         email: c.email || "",
@@ -769,27 +768,27 @@ exports.exportUsersExcel = async (req, res) => {
     });
   }
 };
-
 const REPORT_MAP = {
   users: exports.exportUsersExcel,
   clients: exports.exportClientsExcel,
-  inventory: exports.exportInventoryExcel
+  inventory: exports.exportInventoryExcel,
+  sales: exports.exportSalesExcel
 };
 
 exports.downloadReport = async (req, res) => {
   try {
-    const { type } = req.query;
+    const type = (req.query.type || "sales").toLowerCase();
 
-    if (!type) {
-      return res.status(400).json({
-        success: false,
-        message: "Report type is required"
-      });
-    }
+    const REPORT_MAP = {
+      users: exports.exportUsersExcel,
+      clients: exports.exportClientsExcel,
+      inventory: exports.exportInventoryExcel,
+      sales: exports.exportSalesExcel
+    };
 
     const handler = REPORT_MAP[type];
 
-    if (!handler) {
+    if (!handler || typeof handler !== "function") {
       return res.status(400).json({
         success: false,
         message: "Invalid report type"
@@ -797,13 +796,14 @@ exports.downloadReport = async (req, res) => {
     }
 
     return handler(req, res);
-
   } catch (err) {
     console.error("DOWNLOAD ERROR:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
   }
 };
-
 exports.exportSalesExcel = async (req, res) => {
   try {
     let role = req.user?.role || "";
@@ -832,11 +832,11 @@ exports.exportSalesExcel = async (req, res) => {
         c.name AS "clientName",
         q.total_amount AS "totalAmount",
         q.status,
-        TO_CHAR(q."createdAt",'DD-MM-YYYY HH24:MI') AS "createdAt"
+        TO_CHAR(q.created_at, 'DD-MM-YYYY HH24:MI') AS "createdAt"
       FROM quotations q
       LEFT JOIN clients c ON c.id = q.client_id
       ${whereClause}
-      ORDER BY q."createdAt" DESC
+      ORDER BY q.created_at DESC
     `);
 
     // ===============================

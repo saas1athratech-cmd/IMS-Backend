@@ -1422,7 +1422,7 @@ exports.getCompleteDashboard = async (req, res) => {
     // DYNAMIC FILTER
     // ======================
     let branchFilter = "";
-    let replacements = {};
+    const replacements = {};
 
     if (!isSuper) {
       branchFilter = "WHERE branch_id = :branchId";
@@ -1432,130 +1432,151 @@ exports.getCompleteDashboard = async (req, res) => {
     // ======================
     // CARDS (STOCK SUMMARY)
     // ======================
-    const cards = await sequelize.query(`
+    const cards = await sequelize.query(
+      `
       SELECT 
-      COALESCE(SUM(value),0)::DECIMAL(12,2) AS "totalStockValue",
+        COALESCE(SUM(value),0)::DECIMAL(12,2) AS "totalStockValue",
 
-      COALESCE(SUM(CASE WHEN status='GOOD' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "totalGoodStock",
+        COALESCE(SUM(CASE WHEN status='GOOD' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "totalGoodStock",
 
-      COALESCE(SUM(CASE WHEN status='REPAIRABLE' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "repairableStock",
+        COALESCE(SUM(CASE WHEN status='REPAIRABLE' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "repairableStock",
 
-      COALESCE(SUM(CASE WHEN status='DAMAGED' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "damagedStock"
-
+        COALESCE(SUM(CASE WHEN status='DAMAGED' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "damagedStock"
       FROM stocks
       ${branchFilter}
-    `, { replacements });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // ======================
     // MONTHLY CASHFLOW
     // ======================
-    const monthlyCashflow = await sequelize.query(`
+    const monthlyCashflow = await sequelize.query(
+      `
       SELECT 
-      TO_CHAR(created_at,'Mon') AS month,
-      COALESCE(SUM(value),0)::DECIMAL(12,2) AS amount
-
+        TO_CHAR(created_at,'Mon') AS month,
+        COALESCE(SUM(value),0)::DECIMAL(12,2) AS amount
       FROM stocks
       ${branchFilter}
-
-      GROUP BY month, DATE_PART('month',created_at)
+      GROUP BY TO_CHAR(created_at,'Mon'), DATE_PART('month',created_at)
       ORDER BY DATE_PART('month',created_at)
-    `, { replacements });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // ======================
     // CATEGORY DISTRIBUTION
     // ======================
-    const categoryDistribution = await sequelize.query(`
+    const categoryDistribution = await sequelize.query(
+      `
       SELECT 
-      category,
-      SUM(quantity)::INTEGER AS total
-
+        category,
+        COALESCE(SUM(quantity),0)::INTEGER AS total
       FROM stocks
       ${branchFilter}
-
       GROUP BY category
       ORDER BY total DESC
-    `, { replacements });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // ======================
     // CLIENT TABLE
     // ======================
-    const clients = await sequelize.query(`
+    const clients = await sequelize.query(
+      `
       SELECT
-      c.id,
-      c.client_code AS "clientCode",
-      c.name AS "vendorName",
-      c.email,
-      c.phone,
-      c.gst_number AS "gstNumber",
+        c.id,
+        c.client_code AS "clientCode",
+        c.name AS "vendorName",
+        c.email,
+        c.phone,
+        c.gst_number AS "gstNumber",
 
-      COALESCE(SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END),0) AS "totalAmount",
+        COALESCE(SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END),0) AS "totalAmount",
 
-      COALESCE(
-        SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END) -
-        SUM(CASE WHEN l.type='PAYMENT' THEN l.amount ELSE 0 END)
-      ,0) AS "pendingAmount"
+        COALESCE(
+          SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END) -
+          SUM(CASE WHEN l.type='PAYMENT' THEN l.amount ELSE 0 END)
+        ,0) AS "pendingAmount"
 
       FROM clients c
-
       LEFT JOIN client_ledger l
-      ON l.client_id = c.id
-      ${isSuper ? "" : "AND l.branch_id = :branchId"}
+        ON l.client_id = c.id
+        ${isSuper ? "" : "AND l.branch_id = :branchId"}
 
       ${isSuper ? "" : "WHERE c.branch_id = :branchId"}
 
-      GROUP BY c.id
-      ORDER BY c."createdAt" DESC
+      GROUP BY c.id, c.client_code, c.name, c.email, c.phone, c.gst_number, c.created_at
+      ORDER BY c.created_at DESC
       LIMIT 50
-    `, { replacements });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // ======================
-    // STOCK TABLE (OPTIONAL)
+    // STOCK TABLE
     // ======================
-    const table = await sequelize.query(`
+    const table = await sequelize.query(
+      `
       SELECT 
-      po_number AS "purchaseOrderNo",
-      item AS "itemName",
-      category AS "categories",
-      branch_id AS "branch",
-      quantity,
-      value,
+        po_number AS "purchaseOrderNo",
+        item AS "itemName",
+        category AS "categories",
+        branch_id AS "branch",
+        quantity,
+        value,
 
-      CASE
-        WHEN aging <= 180 THEN 'Fresh'
-        WHEN aging <= 365 THEN 'Normal'
-        WHEN aging <= 730 THEN 'Slow'
-        ELSE 'Critical'
-      END AS status
-
+        CASE
+          WHEN aging <= 180 THEN 'Fresh'
+          WHEN aging <= 365 THEN 'Normal'
+          WHEN aging <= 730 THEN 'Slow'
+          ELSE 'Critical'
+        END AS status
       FROM stocks
       ${branchFilter}
-
       ORDER BY created_at DESC
       LIMIT 50
-    `, { replacements });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // ======================
     // FINAL RESPONSE
     // ======================
-    res.json({
+    return res.json({
       success: true,
       dashboard: {
-        cards: cards[0][0],
-        monthlyCashflow: monthlyCashflow[0],
-        categoryDistribution: categoryDistribution[0],
-        clients: clients[0],
-        table: table[0] // enable if needed
+        cards: cards[0] || {},
+        monthlyCashflow,
+        categoryDistribution,
+        clients,
+        table
       }
     });
-
   } catch (error) {
-    res.status(500).json({
+    console.error("getCompleteDashboard error:", error);
+    return res.status(500).json({
       success: false,
       message: error.message
     });
   }
 };
-
 //client k hisab s ladger
 exports.getClientLedgerByBranch = async (req, res) => {
   try {
