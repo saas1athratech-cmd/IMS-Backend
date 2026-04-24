@@ -1418,38 +1418,73 @@ exports.getCompleteDashboard = async (req, res) => {
 
     const isSuper = role === "super_inventory_manager";
 
+    if (!isSuper && !branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "branch_id missing in user"
+      });
+    }
+
     // ======================
-    // DYNAMIC FILTER
+    // DYNAMIC FILTERS
     // ======================
-    let branchFilter = "";
     const replacements = {};
 
+    const stockBranchWhere = isSuper ? "" : "WHERE s.branch_id = :branchId";
+    const ledgerBranchWhere = isSuper ? "" : "WHERE l.branch_id = :branchId";
+    const clientBranchWhere = isSuper ? "" : "WHERE c.branch_id = :branchId";
+
+    const stockWhereOnly = isSuper ? "" : "WHERE branch_id = :branchId";
+
     if (!isSuper) {
-      branchFilter = "WHERE branch_id = :branchId";
       replacements.branchId = branchId;
     }
 
     // ======================
-    // CARDS (STOCK SUMMARY)
+    // CARDS - UI FORMAT
     // ======================
-    const cards = await sequelize.query(
+    const cardsRows = await sequelize.query(
       `
-      SELECT 
-        COALESCE(SUM(value),0)::DECIMAL(12,2) AS "totalStockValue",
+      SELECT
+        COALESCE((
+          SELECT SUM(s.value)
+          FROM stocks s
+          ${stockBranchWhere}
+        ), 0)::DECIMAL(12,2) AS "totalStockValue",
 
-        COALESCE(SUM(CASE WHEN status='GOOD' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "totalGoodStock",
+        COALESCE((
+          SELECT SUM(l.amount)
+          FROM client_ledger l
+          ${ledgerBranchWhere}
+          ${isSuper ? "WHERE" : "AND"} l.type = 'SALE'
+        ), 0)::DECIMAL(12,2) AS "totalSales",
 
-        COALESCE(SUM(CASE WHEN status='REPAIRABLE' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "repairableStock",
+        COALESCE((
+          SELECT SUM(s.value)
+          FROM stocks s
+          ${stockBranchWhere}
+        ), 0)::DECIMAL(12,2) AS "totalPurchases",
 
-        COALESCE(SUM(CASE WHEN status='DAMAGED' THEN value ELSE 0 END),0)::DECIMAL(12,2) AS "damagedStock"
-      FROM stocks
-      ${branchFilter}
+        COALESCE((
+          SELECT
+            SUM(CASE WHEN l.type = 'SALE' THEN l.amount ELSE 0 END) -
+            SUM(CASE WHEN l.type = 'PAYMENT' THEN l.amount ELSE 0 END)
+          FROM client_ledger l
+          ${ledgerBranchWhere}
+        ), 0)::DECIMAL(12,2) AS "pendingAmount"
       `,
       {
         replacements,
         type: QueryTypes.SELECT
       }
     );
+
+    const cards = cardsRows[0] || {
+      totalStockValue: "0.00",
+      totalSales: "0.00",
+      totalPurchases: "0.00",
+      pendingAmount: "0.00"
+    };
 
     // ======================
     // MONTHLY CASHFLOW
@@ -1457,12 +1492,18 @@ exports.getCompleteDashboard = async (req, res) => {
     const monthlyCashflow = await sequelize.query(
       `
       SELECT 
-        TO_CHAR(created_at,'Mon') AS month,
-        COALESCE(SUM(value),0)::DECIMAL(12,2) AS amount
-      FROM stocks
-      ${branchFilter}
-      GROUP BY TO_CHAR(created_at,'Mon'), DATE_PART('month',created_at)
-      ORDER BY DATE_PART('month',created_at)
+        TO_CHAR(l.created_at, 'Mon') AS month,
+        DATE_PART('month', l.created_at) AS month_no,
+
+        COALESCE(SUM(CASE WHEN l.type = 'SALE' THEN l.amount ELSE 0 END), 0)::DECIMAL(12,2) AS inflow,
+        COALESCE(SUM(CASE WHEN l.type = 'PAYMENT' THEN l.amount ELSE 0 END), 0)::DECIMAL(12,2) AS outflow,
+
+        COALESCE(SUM(CASE WHEN l.type = 'SALE' THEN l.amount ELSE 0 END), 0)::DECIMAL(12,2) AS amount
+
+      FROM client_ledger l
+      ${ledgerBranchWhere}
+      GROUP BY TO_CHAR(l.created_at, 'Mon'), DATE_PART('month', l.created_at)
+      ORDER BY month_no
       `,
       {
         replacements,
@@ -1471,23 +1512,31 @@ exports.getCompleteDashboard = async (req, res) => {
     );
 
     // ======================
-    // CATEGORY DISTRIBUTION
+    // BRANCH SHARE / CATEGORY DISTRIBUTION
     // ======================
-    const categoryDistribution = await sequelize.query(
-      `
-      SELECT 
-        category,
-        COALESCE(SUM(quantity),0)::INTEGER AS total
-      FROM stocks
-      ${branchFilter}
-      GROUP BY category
-      ORDER BY total DESC
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+  // ======================
+// CATEGORY WISE SALES
+// response key same: categoryDistribution
+// ======================
+// ======================
+// CATEGORY WISE SALES / CONTRIBUTION
+// response key same: categoryDistribution
+// ======================
+const categorywiseShare = await sequelize.query(
+  `
+  SELECT 
+    COALESCE(s.category, 'Unknown') AS category,
+    COALESCE(SUM(s.value), 0)::DECIMAL(12,2) AS total
+  FROM stocks s
+  ${stockBranchWhere}
+  GROUP BY s.category
+  ORDER BY total DESC
+  `,
+  {
+    replacements,
+    type: QueryTypes.SELECT
+  }
+);
 
     // ======================
     // CLIENT TABLE
@@ -1502,19 +1551,19 @@ exports.getCompleteDashboard = async (req, res) => {
         c.phone,
         c.gst_number AS "gstNumber",
 
-        COALESCE(SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END),0) AS "totalAmount",
+        COALESCE(SUM(CASE WHEN l.type = 'SALE' THEN l.amount ELSE 0 END),0)::DECIMAL(12,2) AS "totalAmount",
 
         COALESCE(
-          SUM(CASE WHEN l.type='SALE' THEN l.amount ELSE 0 END) -
-          SUM(CASE WHEN l.type='PAYMENT' THEN l.amount ELSE 0 END)
-        ,0) AS "pendingAmount"
+          SUM(CASE WHEN l.type = 'SALE' THEN l.amount ELSE 0 END) -
+          SUM(CASE WHEN l.type = 'PAYMENT' THEN l.amount ELSE 0 END)
+        ,0)::DECIMAL(12,2) AS "pendingAmount"
 
       FROM clients c
       LEFT JOIN client_ledger l
         ON l.client_id = c.id
         ${isSuper ? "" : "AND l.branch_id = :branchId"}
 
-      ${isSuper ? "" : "WHERE c.branch_id = :branchId"}
+      ${clientBranchWhere}
 
       GROUP BY c.id, c.client_code, c.name, c.email, c.phone, c.gst_number, c.created_at
       ORDER BY c.created_at DESC
@@ -1545,8 +1594,9 @@ exports.getCompleteDashboard = async (req, res) => {
           WHEN aging <= 730 THEN 'Slow'
           ELSE 'Critical'
         END AS status
+
       FROM stocks
-      ${branchFilter}
+      ${stockWhereOnly}
       ORDER BY created_at DESC
       LIMIT 50
       `,
@@ -1556,19 +1606,17 @@ exports.getCompleteDashboard = async (req, res) => {
       }
     );
 
-    // ======================
-    // FINAL RESPONSE
-    // ======================
     return res.json({
       success: true,
       dashboard: {
-        cards: cards[0] || {},
+        cards,
         monthlyCashflow,
-        categoryDistribution,
+        categorywiseShare,
         clients,
         table
       }
     });
+
   } catch (error) {
     console.error("getCompleteDashboard error:", error);
     return res.status(500).json({

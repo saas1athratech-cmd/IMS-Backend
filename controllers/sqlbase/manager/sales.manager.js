@@ -3834,11 +3834,12 @@ exports.getStateDashboard = async (req, res) => {
   }
 };
 
+
 exports.getBranchDashboard = async (req, res) => {
   try {
     const role = req.user?.role?.name || req.user?.role;
 
-    const SUPER_ROLES = [
+    const ALLOWED_ROLES = [
       "super_stock_manager",
       "super_admin",
       "super_sales_manager",
@@ -3846,128 +3847,246 @@ exports.getBranchDashboard = async (req, res) => {
       "sales_manager"
     ];
 
-    if (!SUPER_ROLES.includes(role)) {
+    if (!ALLOWED_ROLES.includes(role)) {
       return res.status(403).json({
         success: false,
         message: "❌ Access Denied"
       });
     }
 
-    const { branchId } = req.params;
+    const GLOBAL_ROLES = [
+      "super_admin",
+      "super_sales_manager",
+      "super_stock_manager",
+      "super_inventory_manager"
+    ];
+
+    const isGlobalUser =
+      GLOBAL_ROLES.includes(role) ||
+      req.user?.branches?.includes("ALL");
+
+    const requestedBranchId = req.params?.branchId
+      ? Number(req.params.branchId)
+      : null;
+
+    const userBranches = Array.isArray(req.user?.branches)
+      ? req.user.branches
+          .filter((b) => b !== "ALL" && b !== null && b !== undefined)
+          .map((b) => Number(b))
+          .filter((b) => !Number.isNaN(b))
+      : [];
+
+    const replacements = {};
+
+    let ledgerWhere = "";
+    let quotationWhere = "";
+    let clientWhere = "";
+    let stockWhere = "";
+
+    // ==================================
+    // 🌍 SUPER SALES MANAGER => ALL IMS
+    // ==================================
+    if (isGlobalUser) {
+      // agar super user branchId de bhi de to bhi poori IMS ka data dikhana hai
+      ledgerWhere = "";
+      quotationWhere = "";
+      clientWhere = "";
+      stockWhere = "";
+    } else {
+      // ==================================
+      // 🏢 SALES MANAGER => ONLY OWN BRANCH/BRANCHES
+      // ==================================
+      if (!userBranches.length) {
+        return res.status(403).json({
+          success: false,
+          message: "No branch assigned to this user"
+        });
+      }
+
+      // agar specific branchId pass hui hai to validate karo
+      if (requestedBranchId) {
+        if (!userBranches.includes(requestedBranchId)) {
+          return res.status(403).json({
+            success: false,
+            message: "❌ You are not allowed to access this branch data"
+          });
+        }
+
+        replacements.branchId = requestedBranchId;
+
+        ledgerWhere = `WHERE branch_id = :branchId`;
+        quotationWhere = `WHERE branch_id = :branchId`;
+        clientWhere = `WHERE branch_id = :branchId`;
+        stockWhere = `WHERE s.branch_id = :branchId`;
+      } else {
+        replacements.branches = userBranches;
+
+        ledgerWhere = `WHERE branch_id IN (:branches)`;
+        quotationWhere = `WHERE branch_id IN (:branches)`;
+        clientWhere = `WHERE branch_id IN (:branches)`;
+        stockWhere = `WHERE s.branch_id IN (:branches)`;
+      }
+    }
 
     // =========================
     // 🟦 CARDS
     // =========================
-    const summary = await sequelize.query(`
+    const summary = await sequelize.query(
+      `
       SELECT 
-        COALESCE(SUM(CASE WHEN type='SALE' THEN quantity ELSE 0 END),0) AS "totalSales",
+        COALESCE(SUM(CASE WHEN type = 'SALE' THEN quantity ELSE 0 END), 0) AS "totalSales",
 
-        COALESCE(SUM(
-          CASE WHEN type='SALE' AND DATE_TRUNC('month', "created_at") = DATE_TRUNC('month', CURRENT_DATE)
-          THEN quantity ELSE 0 END
-        ),0) AS "salesThisMonth",
+        COALESCE(
+          SUM(
+            CASE
+              WHEN type = 'SALE'
+               AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
+              THEN quantity
+              ELSE 0
+            END
+          ),
+          0
+        ) AS "salesThisMonth",
 
-        COALESCE(SUM(
-          CASE WHEN type='SALE' THEN total ELSE 0 END
-        ),0) AS "totalRevenue"
+        COALESCE(SUM(CASE WHEN type = 'SALE' THEN total ELSE 0 END), 0) AS "totalRevenue"
 
       FROM ledger
-      WHERE branch_id = :branchId
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+      ${ledgerWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-    // Pending QT
-    const pendingQT = await sequelize.query(`
+    const pendingQT = await sequelize.query(
+      `
       SELECT 
-        COUNT(*) FILTER (WHERE status='pending') AS pending,
-        COUNT(*) FILTER (WHERE status='rejected') AS rejected
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
       FROM quotations
-      WHERE branch_id = :branchId
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+      ${quotationWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-    // Clients
-    const clientCount = await sequelize.query(`
-      SELECT COUNT(*) AS total FROM clients WHERE branch_id = :branchId
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+    const clientCount = await sequelize.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM clients
+      ${clientWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // 📊 STOCK IN / OUT CHART
     // =========================
-    const stockChart = await sequelize.query(`
+    const stockChart = await sequelize.query(
+      `
       SELECT 
-        DATE_TRUNC('week', "created_at") AS week,
-
-        SUM(CASE WHEN type='PURCHASE' THEN quantity ELSE 0 END) AS stockIn,
-        SUM(CASE WHEN type='SALE' THEN quantity ELSE 0 END) AS stockOut
-
+        DATE_TRUNC('week', created_at) AS week,
+        COALESCE(SUM(CASE WHEN type = 'PURCHASE' THEN quantity ELSE 0 END), 0) AS "stockIn",
+        COALESCE(SUM(CASE WHEN type = 'SALE' THEN quantity ELSE 0 END), 0) AS "stockOut"
       FROM ledger
-      WHERE branch_id = :branchId
-
-      GROUP BY week
+      ${ledgerWhere}
+      GROUP BY DATE_TRUNC('week', created_at)
       ORDER BY week ASC
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // 📉 QUOTATION CHART
     // =========================
-    const quotationChart = await sequelize.query(`
+    const quotationChart = await sequelize.query(
+      `
       SELECT 
-        DATE_TRUNC('week', "created_at") AS week,
-
-        COUNT(CASE WHEN status='pending' THEN 1 END) AS pending,
-        COUNT(CASE WHEN status='rejected' THEN 1 END) AS rejected
-
+        DATE_TRUNC('week', created_at) AS week,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'rejected') AS rejected
       FROM quotations
-      WHERE branch_id = :branchId
-
-      GROUP BY week
+      ${quotationWhere}
+      GROUP BY DATE_TRUNC('week', created_at)
       ORDER BY week ASC
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // 📋 PRODUCT TABLE (TOP ITEMS)
     // =========================
-    const products = await sequelize.query(`
-      SELECT 
+    const products = await sequelize.query(
+      `
+      SELECT
         s.item AS "productName",
         s.category AS "category",
 
-        SUM(CASE WHEN l.type='SALE' THEN l.quantity ELSE 0 END) AS "totalSales",
-        SUM(CASE WHEN l.type='SALE' THEN l.total ELSE 0 END) AS "totalRevenue",
+        COALESCE(ls."totalSales", 0) AS "totalSales",
+        COALESCE(ls."totalRevenue", 0) AS "totalRevenue",
 
-        COUNT(DISTINCT c.id) AS "clients",
-
-        COUNT(CASE WHEN q.status='pending' THEN 1 END) AS "pendingQuotation",
-        COUNT(CASE WHEN q.status='rejected' THEN 1 END) AS "rejectedQuotation"
+        COALESCE(cl."clients", 0) AS "clients",
+        COALESCE(qt."pendingQuotation", 0) AS "pendingQuotation",
+        COALESCE(qt."rejectedQuotation", 0) AS "rejectedQuotation"
 
       FROM stocks s
-      LEFT JOIN ledger l ON l.stock_id = s.id
-      LEFT JOIN quotations q ON q.branch_id = s.branch_id
-      LEFT JOIN clients c ON c.branch_id = s.branch_id
 
-      WHERE s.branch_id = :branchId
+      LEFT JOIN (
+        SELECT
+          stock_id,
+          branch_id,
+          SUM(CASE WHEN type = 'SALE' THEN quantity ELSE 0 END) AS "totalSales",
+          SUM(CASE WHEN type = 'SALE' THEN total ELSE 0 END) AS "totalRevenue"
+        FROM ledger
+        ${ledgerWhere}
+        GROUP BY stock_id, branch_id
+      ) ls
+        ON ls.stock_id = s.id
+       AND ls.branch_id = s.branch_id
 
-      GROUP BY s.item, s.category
-      ORDER BY "totalRevenue" DESC
+      LEFT JOIN (
+        SELECT
+          branch_id,
+          COUNT(DISTINCT id) AS "clients"
+        FROM clients
+        ${clientWhere}
+        GROUP BY branch_id
+      ) cl
+        ON cl.branch_id = s.branch_id
+
+      LEFT JOIN (
+        SELECT
+          branch_id,
+          COUNT(*) FILTER (WHERE status = 'pending') AS "pendingQuotation",
+          COUNT(*) FILTER (WHERE status = 'rejected') AS "rejectedQuotation"
+        FROM quotations
+        ${quotationWhere}
+        GROUP BY branch_id
+      ) qt
+        ON qt.branch_id = s.branch_id
+
+      ${stockWhere}
+
+      ORDER BY "totalRevenue" DESC, "totalSales" DESC
       LIMIT 10
-    `, {
-      replacements: { branchId },
-      type: QueryTypes.SELECT
-    });
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // ✅ FINAL RESPONSE
@@ -3976,30 +4095,37 @@ exports.getBranchDashboard = async (req, res) => {
       success: true,
 
       cards: {
-        totalSales: Number(summary[0].totalSales),
-        pendingQuotation: Number(pendingQT[0].pending),
-        salesThisMonth: Number(summary[0].salesThisMonth),
-        totalClients: Number(clientCount[0].total)
+        totalSales: Number(summary?.[0]?.totalSales || 0),
+        pendingQuotation: Number(pendingQT?.[0]?.pending || 0),
+        salesThisMonth: Number(summary?.[0]?.salesThisMonth || 0),
+        totalClients: Number(clientCount?.[0]?.total || 0)
       },
 
       charts: {
-        stockTrend: stockChart,
-        quotationTrend: quotationChart
+        stockTrend: stockChart.map((row) => ({
+          week: row.week,
+          stockIn: Number(row.stockIn || 0),
+          stockOut: Number(row.stockOut || 0)
+        })),
+        quotationTrend: quotationChart.map((row) => ({
+          week: row.week,
+          pending: Number(row.pending || 0),
+          rejected: Number(row.rejected || 0)
+        }))
       },
 
-      products: products.map(p => ({
+      products: products.map((p) => ({
         productName: p.productName,
         category: p.category,
-        totalSales: Number(p.totalSales),
-        totalRevenue: Number(p.totalRevenue),
-        clients: Number(p.clients),
-        pendingQuotation: Number(p.pendingQuotation),
-        rejectedQuotation: Number(p.rejectedQuotation)
+        totalSales: Number(p.totalSales || 0),
+        totalRevenue: Number(p.totalRevenue || 0),
+        clients: Number(p.clients || 0),
+        pendingQuotation: Number(p.pendingQuotation || 0),
+        rejectedQuotation: Number(p.rejectedQuotation || 0)
       }))
     });
-
   } catch (err) {
-    console.error("❌ ERROR:", err);
+    console.error("❌ ERROR in getBranchDashboard:", err);
     return res.status(500).json({
       success: false,
       message: err.message
