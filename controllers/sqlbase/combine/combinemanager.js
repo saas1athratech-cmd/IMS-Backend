@@ -9,191 +9,164 @@ const { ClientLedger, Client } = require("../../../model/SQL_Model");
 // ============================
 // INVENTORY DASHBOARD
 // ============================
-exports.getInventoryDashboard = async (req, res) => {
-  try {
-    const user = req.user;
+// exports.getInventoryDashboard = async (req, res) => {
+//   try {
+//     const user = req.user;
 
-    const roleName = String(user?.role?.name || user?.role || "")
-      .trim()
-      .toLowerCase();
+//     const roleName = String(user?.role?.name || user?.role || "")
+//       .trim()
+//       .toLowerCase();
 
-    const branchId = user?.branch_id;
+//     const branchId = Number(user?.branch_id);
 
-    const isSuperInventory = roleName === "super_inventory_manager";
-    const isInventoryManager = roleName === "inventory_manager";
+//     if (roleName !== "inventory_manager") {
+//       return res.status(403).json({
+//         success: false,
+//         message: "Only inventory_manager allowed"
+//       });
+//     }
 
-    const replacements = {};
-    let stockWhere = "";
-    let ledgerBranchWhere = "";
+//     if (!branchId) {
+//       return res.status(403).json({
+//         success: false,
+//         message: "No branch assigned to inventory manager"
+//       });
+//     }
 
-    if (isSuperInventory) {
-      stockWhere = "";
-      ledgerBranchWhere = "";
-    } else if (isInventoryManager) {
-      if (!branchId) {
-        return res.status(403).json({
-          success: false,
-          message: "No branch assigned to inventory manager"
-        });
-      }
+//     const replacements = { branchId };
 
-      replacements.branchId = Number(branchId);
-      stockWhere = "WHERE s.branch_id = :branchId";
-      ledgerBranchWhere = "AND s.branch_id = :branchId";
-    } else {
-      return res.status(403).json({
-        success: false,
-        message: "Only inventory_manager or super_inventory_manager allowed"
-      });
-    }
+//     const purchaseRows = await sequelize.query(
+//       `
+//       SELECT
+//         COALESCE(SUM(l.total), 0)::DECIMAL(12,2) AS "purchaseAmount"
+//       FROM ledger l
+//       WHERE l.branch_id = :branchId
+//       AND TRIM(UPPER(l.type)) = 'PURCHASE'
+//       `,
+//       { replacements, type: QueryTypes.SELECT }
+//     );
 
-    const purchaseRows = await sequelize.query(
-      `
-      SELECT
-        COALESCE(SUM(COALESCE(l.total, 0)), 0)::DECIMAL(12,2) AS "purchaseAmount"
-      FROM ledger l
-      JOIN stocks s ON s.id = l.stock_id
-      WHERE TRIM(UPPER(l.type)) IN ('PURCHASE', 'STOCK_IN', 'IN')
-      ${ledgerBranchWhere}
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+//     const purchaseAmount = Number(purchaseRows?.[0]?.purchaseAmount || 0);
 
-    const purchaseAmount = Number(purchaseRows?.[0]?.purchaseAmount || 0);
+//     const cardsRows = await sequelize.query(
+//       `
+//       SELECT
+//         COALESCE(COUNT(s.id), 0)::INTEGER AS "totalStockItems",
+//         COALESCE(SUM(s.value), 0)::DECIMAL(12,2) AS "totalStockValue",
+//         0::INTEGER AS "transitItems"
+//       FROM stocks s
+//       WHERE s.branch_id = :branchId
+//       `,
+//       { replacements, type: QueryTypes.SELECT }
+//     );
 
-    const cardsRows = await sequelize.query(
-      `
-      SELECT
-        COALESCE(COUNT(s.id), 0)::INTEGER AS "totalStockItems",
-        COALESCE(SUM(s.value), 0)::DECIMAL(12,2) AS "totalStockValue",
-        0::INTEGER AS "transitItems"
-      FROM stocks s
-      ${stockWhere}
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+//     const cards = cardsRows[0] || {
+//       totalStockItems: 0,
+//       totalStockValue: "0.00",
+//       transitItems: 0
+//     };
 
-    const cards = cardsRows[0] || {
-      totalStockItems: 0,
-      totalStockValue: "0.00",
-      transitItems: 0
-    };
+//     cards.purchaseAmount = purchaseAmount;
 
-    cards.purchaseAmount = purchaseAmount;
+//     const purchaseChart = await sequelize.query(
+//       `
+//       SELECT
+//         TO_CHAR(l.created_at, 'Mon') AS month,
+//         DATE_PART('month', l.created_at) AS month_no,
+//         COALESCE(SUM(l.total), 0)::DECIMAL(12,2) AS amount
+//       FROM ledger l
+//       WHERE l.branch_id = :branchId
+//       AND TRIM(UPPER(l.type)) = 'PURCHASE'
+//       GROUP BY TO_CHAR(l.created_at, 'Mon'), DATE_PART('month', l.created_at)
+//       ORDER BY month_no
+//       `,
+//       { replacements, type: QueryTypes.SELECT }
+//     );
 
-    const purchaseChart = await sequelize.query(
-      `
-      SELECT
-        TO_CHAR(l.created_at, 'Mon') AS month,
-        DATE_PART('month', l.created_at) AS month_no,
-        COALESCE(SUM(COALESCE(l.total, 0)), 0)::DECIMAL(12,2) AS amount
-      FROM ledger l
-      JOIN stocks s ON s.id = l.stock_id
-      WHERE TRIM(UPPER(l.type)) IN ('PURCHASE', 'STOCK_IN', 'IN')
-      ${ledgerBranchWhere}
-      GROUP BY TO_CHAR(l.created_at, 'Mon'), DATE_PART('month', l.created_at)
-      ORDER BY month_no
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+//     const agingRows = await sequelize.query(
+//       `
+//       SELECT
+//         COALESCE(SUM(CASE WHEN s.status = 'GOOD' THEN s.quantity ELSE 0 END), 0)::INTEGER AS available,
+//         COALESCE(SUM(CASE WHEN s.status = 'DAMAGED' THEN s.quantity ELSE 0 END), 0)::INTEGER AS damaged,
+//         COALESCE(SUM(CASE WHEN s.status = 'REPAIRABLE' THEN s.quantity ELSE 0 END), 0)::INTEGER AS repairable
+//       FROM stocks s
+//       WHERE s.branch_id = :branchId
+//       `,
+//       { replacements, type: QueryTypes.SELECT }
+//     );
 
-    const agingRows = await sequelize.query(
-      `
-      SELECT
-        COALESCE(SUM(CASE WHEN s.status = 'GOOD' THEN s.quantity ELSE 0 END), 0)::INTEGER AS available,
-        COALESCE(SUM(CASE WHEN s.status = 'DAMAGED' THEN s.quantity ELSE 0 END), 0)::INTEGER AS damaged,
-        COALESCE(SUM(CASE WHEN s.status = 'REPAIRABLE' THEN s.quantity ELSE 0 END), 0)::INTEGER AS repairable
-      FROM stocks s
-      ${stockWhere}
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+//     const agingChart = agingRows[0] || {
+//       available: 0,
+//       damaged: 0,
+//       repairable: 0
+//     };
 
-    const agingChart = agingRows[0] || {
-      available: 0,
-      damaged: 0,
-      repairable: 0
-    };
+//     const inventoryTable = await sequelize.query(
+//       `
+//       SELECT
+//         s.item AS "itemName",
+//         s.category AS "categories",
+//         s.hsn AS "hsnCode",
+//         s.grn AS "grnNo",
+//         COALESCE(s.po_number, 'N/A') AS "poNumber",
+//         COALESCE(s.quantity, 0)::INTEGER AS "currentStock",
 
-    const inventoryTable = await sequelize.query(
-      `
-      SELECT
-        s.item AS "itemName",
-        s.category AS "categories",
-        s.hsn AS "hsnCode",
-        s.grn AS "grnNo",
-        COALESCE(s.po_number, 'N/A') AS "poNumber",
-        COALESCE(s.quantity, 0)::INTEGER AS "currentStock",
+//         COALESCE((
+//           SELECT SUM(l.quantity)
+//           FROM ledger l
+//           WHERE l.stock_id = s.id
+//           AND l.branch_id = :branchId
+//           AND TRIM(UPPER(l.type)) = 'PURCHASE'
+//         ), 0)::INTEGER AS "stockIn",
 
-        COALESCE((
-          SELECT SUM(l.quantity)
-          FROM ledger l
-          WHERE l.stock_id = s.id
-          AND TRIM(UPPER(l.type)) IN ('PURCHASE', 'STOCK_IN', 'IN')
-        ), 0)::INTEGER AS "stockIn",
+//         COALESCE((
+//           SELECT SUM(l.quantity)
+//           FROM ledger l
+//           WHERE l.stock_id = s.id
+//           AND l.branch_id = :branchId
+//           AND TRIM(UPPER(l.type)) = 'SALE'
+//         ), 0)::INTEGER AS "stockOut",
 
-        COALESCE((
-          SELECT SUM(l.quantity)
-          FROM ledger l
-          WHERE l.stock_id = s.id
-          AND TRIM(UPPER(l.type)) IN ('SALE', 'STOCK_OUT', 'OUT')
-        ), 0)::INTEGER AS "stockOut",
+//         COALESCE((
+//           SELECT SUM(l.quantity)
+//           FROM ledger l
+//           WHERE l.stock_id = s.id
+//           AND l.branch_id = :branchId
+//           AND TRIM(UPPER(l.type)) IN ('DAMAGE', 'DAMAGED', 'SCRAP')
+//         ), 0)::INTEGER AS "scrap",
 
-        COALESCE((
-          SELECT SUM(l.quantity)
-          FROM ledger l
-          WHERE l.stock_id = s.id
-          AND TRIM(UPPER(l.type)) IN ('DAMAGE', 'DAMAGED', 'SCRAP')
-        ), 0)::INTEGER AS "scrap",
+//         s.created_at AS "dispatchDate",
+//         s.updated_at AS "deliveryDate",
+//         s.status AS "status"
 
-        s.created_at AS "dispatchDate",
-        s.updated_at AS "deliveryDate",
-        s.status AS "status"
+//       FROM stocks s
+//       WHERE s.branch_id = :branchId
+//       ORDER BY s.created_at DESC
+//       LIMIT 100
+//       `,
+//       { replacements, type: QueryTypes.SELECT }
+//     );
 
-      FROM stocks s
-      ${stockWhere}
-      ORDER BY s.created_at DESC
-      LIMIT 100
-      `,
-      {
-        replacements,
-        type: QueryTypes.SELECT
-      }
-    );
+//     return res.status(200).json({
+//       success: true,
+//       role: "BRANCH",
+//       dashboard: {
+//         cards,
+//         purchaseChart,
+//         agingChart,
+//         inventoryTable
+//       }
+//     });
 
-    return res.status(200).json({
-      success: true,
-      role: isSuperInventory ? "SUPER" : "BRANCH",
-      dashboard: {
-        cards,
-        purchaseChart,
-        agingChart,
-        inventoryTable
-      }
-    });
-
-  } catch (error) {
-    console.error("getInventoryDashboard error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Error fetching inventory data",
-      error: error.message
-    });
-  }
-};
-
+//   } catch (error) {
+//     console.error("getInventoryDashboard error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Error fetching inventory data",
+//       error: error.message
+//     });
+//   }
+// };
 // ============================
 // DASHBOARD CHARTS
 // ============================
@@ -1094,147 +1067,188 @@ ORDER BY sm.created_at DESC
 
 exports.getInventoryDashboard = async (req, res) => {
   try {
-
     const user = req.user;
 
-    const SUPER_ROLES = [
+    const role = String(user?.role?.name || user?.role || "")
+      .toLowerCase()
+      .trim();
+
+    const isSuper = [
       "super_admin",
       "super_inventory_manager",
-      "super_stock_manager",
-      "inventory_manager"
-    ];
+      "super_stock_manager"
+    ].includes(role);
 
-    const role = user?.role?.toLowerCase().trim();
-    const isSuper = SUPER_ROLES.includes(role);
+    const isInventoryManager = role === "inventory_manager";
+
+    if (!isSuper && !isInventoryManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied"
+      });
+    }
+
+    if (isInventoryManager && !user?.branch_id) {
+      return res.status(403).json({
+        success: false,
+        message: "No branch assigned to inventory manager"
+      });
+    }
+
+    const replacements = isInventoryManager
+      ? { branchId: Number(user.branch_id) }
+      : {};
+
+    const stockWhere = isInventoryManager
+      ? "WHERE s.branch_id = :branchId"
+      : "";
+
+    const ledgerWhere = isInventoryManager
+      ? "AND l.branch_id = :branchId"
+      : "";
 
     // =========================
-    // 🔥 DYNAMIC FILTER
+    // CARDS
     // =========================
-    const branchCondition = isSuper
-      ? "" // 👉 ALL DATA
-      : "AND branch_id = :branchId";
-
-    const replacements = isSuper
-      ? {}
-      : { branchId: user.branch_id };
-
-    // =========================
-    // CARDS DATA
-    // =========================
-    const cards = await sequelize.query(`
-
+    const cardsRows = await sequelize.query(
+      `
       SELECT 
-      COUNT(id)::INTEGER AS "totalStockItems",
-      COALESCE(SUM(value),0)::INTEGER AS "totalStockValue",
+        COUNT(s.id)::INTEGER AS "totalStockItems",
+        COALESCE(SUM(s.value), 0)::INTEGER AS "totalStockValue",
 
-      COALESCE((
-        SELECT SUM(quantity)
-        FROM stock_movements
-        WHERE type='IN'
-        ${branchCondition}
-      ),0)::INTEGER AS "purchaseAmount",
+        COALESCE((
+          SELECT SUM(l.total)
+          FROM ledger l
+          WHERE l.type::text = 'PURCHASE'
+          ${ledgerWhere}
+        ), 0)::INTEGER AS "purchaseAmount",
 
-      COALESCE((
-        SELECT COUNT(id)
-        FROM stock_movements
-        WHERE type='OUT'
-        ${branchCondition}
-      ),0)::INTEGER AS "transitItems"
+        0::INTEGER AS "transitItems"
 
-      FROM stocks
-      ${isSuper ? "" : "WHERE branch_id = :branchId"}
-
-    `,{ replacements });
-
+      FROM stocks s
+      ${stockWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // PURCHASE CHART
     // =========================
-    const purchaseChart = await sequelize.query(`
-
+    const purchaseChart = await sequelize.query(
+      `
       SELECT 
-      TO_CHAR(created_at,'Mon') AS month,
-      SUM(quantity)::INTEGER AS amount
-
-      FROM stock_movements
-      WHERE type='IN'
-      ${branchCondition}
-
-      GROUP BY month, DATE_PART('month',created_at)
-      ORDER BY DATE_PART('month',created_at)
-
-    `,{ replacements });
-
+        TO_CHAR(l.created_at, 'Mon') AS month,
+        DATE_PART('month', l.created_at) AS month_no,
+        COALESCE(SUM(l.total), 0)::INTEGER AS amount
+      FROM ledger l
+      WHERE l.type::text = 'PURCHASE'
+      ${ledgerWhere}
+      GROUP BY TO_CHAR(l.created_at, 'Mon'), DATE_PART('month', l.created_at)
+      ORDER BY month_no
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // AGING CHART
     // =========================
-    const agingChart = await sequelize.query(`
-
+    const agingRows = await sequelize.query(
+      `
       SELECT 
-      SUM(CASE WHEN status='GOOD' THEN quantity ELSE 0 END)::INTEGER AS available,
-      SUM(CASE WHEN status='DAMAGED' THEN quantity ELSE 0 END)::INTEGER AS damaged,
-      SUM(CASE WHEN status='REPAIRABLE' THEN quantity ELSE 0 END)::INTEGER AS repairable
-
-      FROM stocks
-      ${isSuper ? "" : "WHERE branch_id = :branchId"}
-
-    `,{ replacements });
-
+        COALESCE(SUM(CASE WHEN s.status::text = 'GOOD' THEN s.quantity ELSE 0 END), 0)::INTEGER AS available,
+        COALESCE(SUM(CASE WHEN s.status::text = 'DAMAGED' THEN s.quantity ELSE 0 END), 0)::INTEGER AS damaged,
+        COALESCE(SUM(CASE WHEN s.status::text = 'REPAIRABLE' THEN s.quantity ELSE 0 END), 0)::INTEGER AS repairable
+      FROM stocks s
+      ${stockWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
     // =========================
     // INVENTORY TABLE
     // =========================
-    const table = await sequelize.query(`
-
+    const inventoryTable = await sequelize.query(
+      `
       SELECT 
-      s.item AS "itemName",
-      s.category AS "categories",
-      s.hsn AS "hsnCode",
-      s.grn AS "grnNo",
-      s.po_number AS "poNumber",
-      s.quantity AS "currentStock",
+        s.item AS "itemName",
+        s.category AS "categories",
+        s.hsn AS "hsnCode",
+        s.grn AS "grnNo",
+        COALESCE(s.po_number, 'N/A') AS "poNumber",
+        COALESCE(s.quantity, 0)::INTEGER AS "currentStock",
 
-      COALESCE(SUM(CASE WHEN sm.type='IN' THEN sm.quantity ELSE 0 END),0)::INTEGER AS "stockIn",
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type::text = 'PURCHASE'
+        ), 0)::INTEGER AS "stockIn",
 
-      COALESCE(SUM(CASE WHEN sm.type='OUT' THEN sm.quantity ELSE 0 END),0)::INTEGER AS "stockOut",
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type::text = 'SALE'
+        ), 0)::INTEGER AS "stockOut",
 
-      COALESCE(SUM(CASE WHEN s.status='DAMAGED' THEN sm.quantity ELSE 0 END),0)::INTEGER AS "scrap",
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type::text IN ('DAMAGE', 'DAMAGED', 'SCRAP')
+        ), 0)::INTEGER AS "scrap",
 
-      s.created_at AS "dispatchDate",
-      s.updated_at AS "deliveryDate",
-      s.status
+        s.created_at AS "dispatchDate",
+        s.updated_at AS "deliveryDate",
+        s.status AS "status"
 
       FROM stocks s
-      LEFT JOIN stock_movements sm ON s.id = sm.stock_id
-
-      ${isSuper ? "" : "WHERE s.branch_id = :branchId"}
-
-      GROUP BY s.id
+      ${stockWhere}
       ORDER BY s.id DESC
       LIMIT 50
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-    `,{ replacements });
-
-
-    res.json({
+    return res.status(200).json({
       success: true,
       role: isSuper ? "SUPER" : "BRANCH",
       dashboard: {
-        cards: cards[0][0],
-        purchaseChart: purchaseChart[0],
-        agingChart: agingChart[0][0],
-        inventoryTable: table[0]
+        cards: cardsRows[0] || {
+          totalStockItems: 0,
+          totalStockValue: 0,
+          purchaseAmount: 0,
+          transitItems: 0
+        },
+        purchaseChart,
+        agingChart: agingRows[0] || {
+          available: 0,
+          damaged: 0,
+          repairable: 0
+        },
+        inventoryTable
       }
     });
 
   } catch (err) {
+    console.error("getInventoryDashboard error:", err);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: err.message
     });
-
   }
 };
 
