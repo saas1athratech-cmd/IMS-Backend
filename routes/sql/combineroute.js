@@ -17,7 +17,8 @@ const {
   getReportsAnalyticsDashboard,
   getCompleteDashboard,
   addStockItem,
-  getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock
+
+  getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock,exportInventoryCSV
 } = require("../../controllers/sqlbase/combine/combinemanager");
 
 const auth = require("../../middleware/auth");
@@ -163,6 +164,8 @@ router.post(
   upload.single("file"), // excel file key = file
   bulkUploadStock,checkRole(["stock_manager","inventory_manager","super_inventory_manager"])
 );
+
+router.get("/inventory/export-csv", auth,checkRole(["stock_manager","inventory_manager","super_inventory_manager"]), exportInventoryCSV);
 
 router.post('/add-stock',auth,checkRole(["stock_manager","inventory_manager","super_inventory_manager"]),addStockItem)
 router.get('/dashboard/states',auth,checkRole(["stock_manager","inventory_manager","super_inventory_manager","super_admin","super_sales_manager"]), getAllStatesDashboard);
