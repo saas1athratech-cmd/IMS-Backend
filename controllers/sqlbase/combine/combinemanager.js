@@ -11,91 +11,207 @@ const { ClientLedger, Client } = require("../../../model/SQL_Model");
 // ============================
 exports.getInventoryDashboard = async (req, res) => {
   try {
+    const user = req.user;
 
-    const userBranches = req.user?.branches || [];
+    const role = user?.role?.name || user?.role;
+    const branches = user?.branches || [];
+    const branchId = user?.branch_id;
 
-    if (!userBranches.length) {
-      return res.status(403).json({
-        success: false,
-        message: "No branch access"
-      });
+    const isSuperUser =
+      role === "super_admin" ||
+      role === "super_inventory_manager" ||
+      branches.includes("ALL");
+
+    const branchIds = branches
+      .filter((b) => b !== "ALL")
+      .map(Number)
+      .filter(Boolean);
+
+    const replacements = {};
+    let stockWhere = "";
+
+    if (!isSuperUser) {
+      if (branchId) {
+        replacements.branchId = Number(branchId);
+        stockWhere = "WHERE s.branch_id = :branchId";
+      } else if (branchIds.length) {
+        replacements.branchIds = branchIds;
+        stockWhere = "WHERE s.branch_id = ANY(:branchIds)";
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: "No branch access"
+        });
+      }
     }
 
-    // 👑 SUPER USER CHECK
-    const isSuperUser = userBranches.includes("ALL");
+    // ✅ safe filter
+    const stockFilter = stockWhere
+      ? stockWhere.replace("WHERE", "AND")
+      : "";
 
-    // =========================
-    // WHERE CONDITION
-    // =========================
-    const whereCondition = isSuperUser
-      ? {} // ✅ ALL DATA
-      : {
-          branch_id: {
-            [Op.in]: userBranches
-          }
-        };
+    // ======================
+    // PURCHASE AMOUNT ✅ FIXED
+    // ======================
+    const purchaseRows = await sequelize.query(
+      `
+      SELECT
+        COALESCE(SUM(l.total), 0)::DECIMAL(12,2) AS "purchaseAmount"
+      FROM ledger l
+      JOIN stocks s ON s.id = l.stock_id
+      WHERE 1=1
+      ${stockFilter}
+      AND TRIM(UPPER(l.type)) = 'PURCHASE'
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-    const data = await Stock.findAll({
-      where: whereCondition,
+    const purchaseAmount = Number(purchaseRows?.[0]?.purchaseAmount || 0);
 
-      attributes: [
-        "id",
-        "item",
-        "category",
-        "hsn",
-        "grn",
-        "po_number",
-        ["quantity", "current_stock"],
-        "status",
-        "branch_id",
+    // ======================
+    // CARDS (unchanged)
+    // ======================
+    const cardsRows = await sequelize.query(
+      `
+      SELECT
+        COALESCE(COUNT(s.id), 0)::INTEGER AS "totalStockItems",
+        COALESCE(SUM(s.value), 0)::DECIMAL(12,2) AS "totalStockValue",
+        COALESCE(SUM(CASE WHEN s.status = 'TRANSIT' THEN s.quantity ELSE 0 END), 0)::INTEGER AS "transitItems"
+      FROM stocks s
+      ${stockWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-        [
-          sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity),0)
-            FROM ledger
-            WHERE ledger.stock_id = "Stock"."id"
-            AND ledger.type = 'PURCHASE'
-          )`),
-          "stock_in"
-        ],
+    const cards = cardsRows[0] || {
+      totalStockItems: 0,
+      totalStockValue: "0.00",
+      transitItems: 0
+    };
 
-        [
-          sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity),0)
-            FROM ledger
-            WHERE ledger.stock_id = "Stock"."id"
-            AND ledger.type = 'SALE'
-          )`),
-          "stock_out"
-        ],
+    cards.purchaseAmount = purchaseAmount;
 
-        [
-          sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity),0)
-            FROM ledger
-            WHERE ledger.stock_id = "Stock"."id"
-            AND ledger.type = 'DAMAGE'
-          )`),
-          "scrap"
-        ]
-      ]
-    });
+    // ======================
+    // PURCHASE CHART ✅ FIXED
+    // ======================
+    const purchaseChart = await sequelize.query(
+      `
+      SELECT
+        TO_CHAR(l.created_at, 'Mon') AS month,
+        DATE_PART('month', l.created_at) AS month_no,
+        COALESCE(SUM(l.total), 0)::DECIMAL(12,2) AS amount
+      FROM ledger l
+      JOIN stocks s ON s.id = l.stock_id
+      WHERE 1=1
+      ${stockFilter}
+      AND TRIM(UPPER(l.type)) = 'PURCHASE'
+      GROUP BY TO_CHAR(l.created_at, 'Mon'), DATE_PART('month', l.created_at)
+      ORDER BY month_no
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
 
-    res.json({
+    // ======================
+    // AGING / STATUS (unchanged)
+    // ======================
+    const agingRows = await sequelize.query(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN s.status = 'GOOD' THEN s.quantity ELSE 0 END), 0)::INTEGER AS available,
+        COALESCE(SUM(CASE WHEN s.status = 'DAMAGED' THEN s.quantity ELSE 0 END), 0)::INTEGER AS damaged,
+        COALESCE(SUM(CASE WHEN s.status = 'REPAIRABLE' THEN s.quantity ELSE 0 END), 0)::INTEGER AS repairable
+      FROM stocks s
+      ${stockWhere}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
+
+    const agingChart = agingRows[0] || {
+      available: 0,
+      damaged: 0,
+      repairable: 0
+    };
+
+    // ======================
+    // INVENTORY TABLE ✅ FIXED (removed branch over-filter)
+    // ======================
+    const inventoryTable = await sequelize.query(
+      `
+      SELECT
+        s.item AS "itemName",
+        s.category AS "categories",
+        s.hsn AS "hsnCode",
+        s.grn AS "grnNo",
+        COALESCE(s.po_number, 'N/A') AS "poNumber",
+        COALESCE(s.quantity, 0)::INTEGER AS "currentStock",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND TRIM(UPPER(l.type)) = 'PURCHASE'
+        ), 0)::INTEGER AS "stockIn",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND TRIM(UPPER(l.type)) = 'SALE'
+        ), 0)::INTEGER AS "stockOut",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND TRIM(UPPER(l.type)) = 'DAMAGE'
+        ), 0)::INTEGER AS "scrap",
+
+        s.dispatch_date AS "dispatchDate",
+        s.delivery_date AS "deliveryDate",
+        s.status AS "status"
+
+      FROM stocks s
+      ${stockWhere}
+      ORDER BY s.created_at DESC
+      LIMIT 100
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
+
+    return res.json({
       success: true,
-      data
+      role: isSuperUser ? "SUPER" : "BRANCH",
+      dashboard: {
+        cards,
+        purchaseChart,
+        agingChart,
+        inventoryTable
+      }
     });
-
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
+    console.error("getInventoryDashboard error:", error);
+    return res.status(500).json({
       success: false,
-      message: "Error fetching inventory data"
+      message: "Error fetching inventory data",
+      error: error.message
     });
   }
 };
-
-
 
 // ============================
 // DASHBOARD CHARTS
@@ -2452,6 +2568,133 @@ exports.getCityBranchDashboard = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: err.message
+    });
+  }
+};
+
+
+
+
+exports.exportInventoryCSV = async (req, res) => {
+  try {
+    const user = req.user;
+
+    const role = user?.role || user?.role?.name;
+    const branches = user?.branches || [];
+    const branchId = user?.branch_id;
+
+    const isSuper =
+      role === "super_admin" ||
+      role === "super_inventory_manager" ||
+      branches.includes("ALL");
+
+    const branchIds = branches
+      .filter((b) => b !== "ALL")
+      .map(Number)
+      .filter(Boolean);
+
+    const replacements = {};
+    let branchWhere = "";
+
+    if (!isSuper) {
+      if (branchId) {
+        branchWhere = "WHERE s.branch_id = :branchId";
+        replacements.branchId = branchId;
+      } else if (branchIds.length) {
+        branchWhere = "WHERE s.branch_id = ANY(:branchIds)";
+        replacements.branchIds = branchIds;
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: "No branch access"
+        });
+      }
+    }
+
+    const rows = await sequelize.query(
+      `
+      SELECT
+        COALESCE(s.item, '') AS "Item Name",
+        COALESCE(s.category, '') AS "Categories",
+        COALESCE(s.hsn, '') AS "HSN Code",
+        COALESCE(s.grn, '') AS "GRN No.",
+        COALESCE(s.po_number, 'N/A') AS "Purchase Order No.",
+        COALESCE(s.quantity, 0) AS "Current Stock",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'PURCHASE'
+        ), 0) AS "Stock IN",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'SALE'
+        ), 0) AS "Stock OUT",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'DAMAGE'
+        ), 0) AS "Scrap",
+
+        '' AS "Dispatch Date",
+        '' AS "Delivery Date",
+        COALESCE(s.status::TEXT, 'N/A') AS "Status"
+
+      FROM stocks s
+      ${branchWhere}
+      ORDER BY s.created_at DESC
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No inventory data found"
+      });
+    }
+
+    const headers = Object.keys(rows[0]);
+
+    const escapeCSV = (value) => {
+      if (value === null || value === undefined) return "";
+      return `"${String(value).replace(/"/g, '""')}"`;
+    };
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) =>
+        headers.map((header) => escapeCSV(row[header])).join(",")
+      )
+    ].join("\n");
+
+    const fileName = `inventory-report-${Date.now()}.csv`;
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.end(csvContent, "utf8");
+  } catch (error) {
+    console.error("exportInventoryCSV error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error exporting inventory CSV",
+      error: error.message
     });
   }
 };
