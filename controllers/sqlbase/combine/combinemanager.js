@@ -3793,33 +3793,39 @@ exports.getBranchDetailsDashboard = async (req, res) => {
 exports.getItemFullDetails = async (req, res) => {
   try {
 
+    // =====================================================
+    // USER + ROLE VALIDATION
+    // =====================================================
+
     const user = req.user;
 
     const SUPER_ROLES = [
-      "super_stock_manager",
       "super_admin",
-      "super_sales_manager",
+      "admin",
       "super_inventory_manager",
-      "admin"
+      "super_stock_manager",
+      "super_sales_manager"
     ];
 
     const role =
-      user?.role?.toLowerCase().trim();
+      user?.role?.toLowerCase()?.trim();
 
     if (!role) {
       return res.status(403).json({
         success: false,
-        message: "Invalid Role"
+        message: "Invalid user role"
       });
     }
 
     const isSuperUser =
       SUPER_ROLES.includes(role);
 
-    let {
-      branchId,
-      itemName
-    } = req.params;
+    // =====================================================
+    // PARAMS
+    // =====================================================
+
+    const { branchId, itemName } =
+      req.params;
 
     const requestedBranchId =
       Number(branchId);
@@ -3827,9 +3833,30 @@ exports.getItemFullDetails = async (req, res) => {
     const itemKey =
       String(itemName || "").trim();
 
+    if (
+      !requestedBranchId ||
+      isNaN(requestedBranchId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid branchId is required"
+      });
+    }
+
+    if (!itemKey) {
+      return res.status(400).json({
+        success: false,
+        message: "itemName is required"
+      });
+    }
+
+    // =====================================================
+    // BRANCH ACCESS CHECK
+    // =====================================================
+
     const userBranches =
-      (user.branches || [])
-      .map(b => Number(b));
+      (user?.branches || [])
+      .map(Number);
 
     if (
       !isSuperUser &&
@@ -3840,274 +3867,419 @@ exports.getItemFullDetails = async (req, res) => {
       return res.status(403).json({
         success: false,
         message:
-          "You can only access your own branch data"
+          "Access denied for this branch"
       });
     }
 
-    // =====================================
-    // UPDATED STATS
-    // =====================================
-    const stats = await sequelize.query(
-      `
-      SELECT 
+    // =====================================================
+    // FIND STOCK ITEM
+    // =====================================================
 
-        COALESCE(
-          SUM(s.quantity),
-          0
-        ) AS "totalStock",
-
-        COALESCE(
-          SUM(s.value),
-          0
-        ) AS "totalValue",
-
-        COUNT(s.id) AS "entries",
-
-        // =====================================
-        // STOCK MOVEMENT BASED
-        // =====================================
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'IN'
-              THEN sm.quantity
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "stockIn",
-
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'OUT'
-              THEN sm.quantity
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "stockOut",
-
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'IN'
-              THEN sm.quantity
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "purchaseQty",
-
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'IN'
-              THEN sm.quantity * s.rate
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "purchaseValue",
-
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'OUT'
-              THEN sm.quantity
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "salesQty",
-
-        COALESCE(
-          SUM(
-            CASE
-              WHEN sm.type = 'OUT'
-              THEN sm.quantity * s.rate
-              ELSE 0
-            END
-          ),
-          0
-        ) AS "salesValue"
-
-      FROM stocks s
-
-      LEFT JOIN stock_movements sm
-      ON sm.stock_id = s.id
-
-      WHERE s.branch_id = :branchId
-
-      AND LOWER(
-        TRIM(s.item)
-      ) = LOWER(
-        TRIM(:itemName)
-      )
-      `,
-      {
-        replacements: {
-          branchId:
-            requestedBranchId,
-
-          itemName:
+    const stockResult =
+      await sequelize.query(
+        `
+        SELECT 
+          s.*
+        FROM stocks s
+        WHERE s.branch_id = :branchId
+        AND (
+          CAST(s.id AS TEXT) = :itemKey
+          OR LOWER(TRIM(s.item)) = LOWER(TRIM(:itemKey))
+          OR LOWER(TRIM(s.sku)) = LOWER(TRIM(:itemKey))
+        )
+        LIMIT 1
+        `,
+        {
+          replacements: {
+            branchId: requestedBranchId,
             itemKey
-        },
+          },
+          type: QueryTypes.SELECT
+        }
+      );
 
-        type: QueryTypes.SELECT
-      }
-    );
+    if (!stockResult.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Stock item not found"
+      });
+    }
 
-    // =====================================
-    // REST SAME
-    // =====================================
+    const stock =
+      stockResult[0];
 
-    const agingChart = await sequelize.query(
-      `
-      SELECT 
-        COALESCE(aging,0) AS aging,
-        COALESCE(SUM(quantity),0) AS qty
-      FROM stocks
-      WHERE branch_id = :branchId
-      AND LOWER(TRIM(item)) = LOWER(TRIM(:itemName))
-      GROUP BY aging
-      ORDER BY aging ASC
-      `,
-      {
-        replacements: {
-          branchId: requestedBranchId,
-          itemName: itemKey
-        },
-        type: QueryTypes.SELECT
-      }
-    );
+    const stockId =
+      Number(stock.id);
 
-    const statusChart = await sequelize.query(
-      `
-      SELECT 
-        COALESCE(status::text,'GOOD') AS status,
-        COALESCE(SUM(quantity),0) AS qty
-      FROM stocks
-      WHERE branch_id = :branchId
-      AND LOWER(TRIM(item)) = LOWER(TRIM(:itemName))
-      GROUP BY status
-      `,
-      {
-        replacements: {
-          branchId: requestedBranchId,
-          itemName: itemKey
-        },
-        type: QueryTypes.SELECT
-      }
-    );
+    // =====================================================
+    // MAIN STATS
+    // =====================================================
 
-    const monthlyTrend = await sequelize.query(
-      `
-      SELECT 
-        TO_CHAR(created_at,'YYYY-MM') AS month,
-        COALESCE(SUM(quantity),0) AS qty,
-        COALESCE(SUM(value),0) AS value
-      FROM stocks
-      WHERE branch_id = :branchId
-      AND LOWER(TRIM(item)) = LOWER(TRIM(:itemName))
-      GROUP BY TO_CHAR(created_at,'YYYY-MM')
-      ORDER BY month ASC
-      `,
-      {
-        replacements: {
-          branchId: requestedBranchId,
-          itemName: itemKey
-        },
-        type: QueryTypes.SELECT
-      }
-    );
+    const statsResult =
+      await sequelize.query(
+        `
+        SELECT 
 
-    const batchData = await sequelize.query(
-      `
-      SELECT 
-        COALESCE(batch_no,'N/A') AS batch_no,
-        COALESCE(grn,'N/A') AS grn,
-        COALESCE(po_number,'N/A') AS po_number,
-        COALESCE(SUM(quantity),0) AS qty,
-        COALESCE(SUM(value),0) AS value
-      FROM stocks
-      WHERE branch_id = :branchId
-      AND LOWER(TRIM(item)) = LOWER(TRIM(:itemName))
-      GROUP BY batch_no, grn, po_number
-      ORDER BY value DESC
-      LIMIT 5
-      `,
-      {
-        replacements: {
-          branchId: requestedBranchId,
-          itemName: itemKey
-        },
-        type: QueryTypes.SELECT
-      }
-    );
+          COALESCE(s.quantity, 0)
+          AS "totalStock",
 
-    return res.json({
+          COALESCE(s.rate, 0)
+          AS "rate",
+
+          COALESCE(s.value, 0)
+          AS "totalValue",
+
+          COALESCE(s.bundle_size, '0')
+          AS "bundleSize",
+
+          COALESCE(s.min_stock_level, 0)
+          AS "minStockLevel",
+
+          COALESCE(
+            (
+              SELECT SUM(sm.quantity)
+              FROM stock_movements sm
+              WHERE sm.stock_id = s.id
+              AND sm.type = 'IN'
+            ),
+            0
+          ) AS "stockIn",
+
+          COALESCE(
+            (
+              SELECT SUM(sm.quantity)
+              FROM stock_movements sm
+              WHERE sm.stock_id = s.id
+              AND sm.type = 'OUT'
+            ),
+            0
+          ) AS "stockOut",
+
+          COALESCE(
+            (
+              SELECT COUNT(sm.id)
+              FROM stock_movements sm
+              WHERE sm.stock_id = s.id
+            ),
+            0
+          ) AS "totalMovements"
+
+        FROM stocks s
+
+        WHERE s.id = :stockId
+        LIMIT 1
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    const stats =
+      statsResult[0];
+
+    // =====================================================
+    // AGING ANALYTICS
+    // =====================================================
+
+    const agingChart =
+      await sequelize.query(
+        `
+        SELECT 
+          COALESCE(aging,0) AS aging,
+          COALESCE(quantity,0) AS qty
+        FROM stocks
+        WHERE id = :stockId
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    // =====================================================
+    // STATUS ANALYTICS
+    // =====================================================
+
+    const statusChart =
+      await sequelize.query(
+        `
+        SELECT 
+          COALESCE(status::text,'GOOD')
+          AS status,
+
+          COALESCE(quantity,0)
+          AS qty
+
+        FROM stocks
+
+        WHERE id = :stockId
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    // =====================================================
+    // MONTHLY TREND
+    // =====================================================
+
+    const monthlyTrend =
+      await sequelize.query(
+        `
+        SELECT 
+
+          TO_CHAR(
+            created_at,
+            'YYYY-MM'
+          ) AS month,
+
+          COALESCE(quantity,0)
+          AS qty,
+
+          COALESCE(value,0)
+          AS value
+
+        FROM stocks
+
+        WHERE id = :stockId
+
+        ORDER BY created_at ASC
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    // =====================================================
+    // MOVEMENT HISTORY
+    // =====================================================
+
+    const movementHistory =
+      await sequelize.query(
+        `
+        SELECT 
+
+          sm.id,
+
+          sm.type,
+
+          sm.quantity,
+
+          COALESCE(
+            sm.bundle_quantity,
+            0
+          ) AS bundle_quantity,
+
+          sm.created_at
+
+        FROM stock_movements sm
+
+        WHERE sm.stock_id = :stockId
+
+        ORDER BY sm.created_at DESC
+
+        LIMIT 20
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    // =====================================================
+    // BATCH DATA
+    // =====================================================
+
+    const batchData =
+      await sequelize.query(
+        `
+        SELECT 
+
+          COALESCE(batch_no,'N/A')
+          AS batch_no,
+
+          COALESCE(grn,'N/A')
+          AS grn,
+
+          COALESCE(po_number,'N/A')
+          AS po_number,
+
+          COALESCE(quantity,0)
+          AS qty,
+
+          COALESCE(value,0)
+          AS value
+
+        FROM stocks
+
+        WHERE id = :stockId
+        `,
+        {
+          replacements: {
+            stockId
+          },
+          type: QueryTypes.SELECT
+        }
+      );
+
+    // =====================================================
+    // LOW STOCK CHECK
+    // =====================================================
+
+    const lowStock =
+      Number(stats.totalStock) <=
+      Number(stats.minStockLevel);
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
+    return res.status(200).json({
 
       success: true,
 
-      item: itemName,
+      message:
+        "Item full details fetched successfully",
 
-      branchId: requestedBranchId,
+      data: {
 
-      stats: {
+        stock: {
 
-        totalStock:
-          stats[0]?.totalStock || "0",
+          id: stock.id,
 
-        totalValue:
-          Number(
-            stats[0]?.totalValue || 0
-          ),
+          item: stock.item,
 
-        entries:
-          stats[0]?.entries || "0",
+          sku: stock.sku,
 
-        stockIn:
-          stats[0]?.stockIn || "0",
+          category: stock.category,
 
-        stockOut:
-          stats[0]?.stockOut || "0",
+          sub_category:
+            stock.sub_category,
 
-        purchaseQty:
-          stats[0]?.purchaseQty || "0",
+          brand: stock.brand,
 
-        purchaseValue:
-          Number(
-            stats[0]?.purchaseValue || 0
-          ),
+          model_no:
+            stock.model_no,
 
-        salesQty:
-          stats[0]?.salesQty || "0",
+          serial_no:
+            stock.serial_no,
 
-        salesValue:
-          Number(
-            stats[0]?.salesValue || 0
-          )
+          unit: stock.unit,
 
-      },
+          hsn: stock.hsn,
 
-      charts: {
-        agingChart,
-        statusChart,
-        monthlyTrend
-      },
+          gst_percent:
+            stock.gst_percent,
 
-      batches: batchData
+          batch_no:
+            stock.batch_no,
+
+          grn: stock.grn,
+
+          po_number:
+            stock.po_number,
+
+          rack_no:
+            stock.rack_no,
+
+          location:
+            stock.location,
+
+          specification:
+            stock.specification,
+
+          item_description:
+            stock.item_description,
+
+          status:
+            stock.status,
+
+          aging:
+            stock.aging,
+
+          created_at:
+            stock.created_at
+        },
+
+        analytics: {
+
+          totalStock:
+            Number(stats.totalStock),
+
+          totalValue:
+            Number(stats.totalValue),
+
+          stockRate:
+            Number(stats.rate),
+
+          stockIn:
+            Number(stats.stockIn),
+
+          stockOut:
+            Number(stats.stockOut),
+
+          currentBalance:
+            Number(stats.stockIn) -
+            Number(stats.stockOut),
+
+          totalMovements:
+            Number(stats.totalMovements),
+
+          bundleSize:
+            stats.bundleSize,
+
+          lowStock,
+
+          minStockLevel:
+            Number(
+              stats.minStockLevel
+            )
+
+        },
+
+        charts: {
+
+          agingChart,
+
+          statusChart,
+
+          monthlyTrend
+
+        },
+
+        movementHistory,
+
+        batches: batchData
+
+      }
 
     });
 
   } catch (err) {
 
-    console.error("ERROR:", err);
+    console.error(
+      "GET ITEM FULL DETAILS ERROR:",
+      err
+    );
 
     return res.status(500).json({
       success: false,
-      message: err.message
+      message:
+        err.message ||
+        "Internal server error"
     });
 
   }
