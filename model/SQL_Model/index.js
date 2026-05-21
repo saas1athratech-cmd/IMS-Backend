@@ -21,6 +21,9 @@ const RecentActivity = require("./recentactivity");
 const SystemSetting = require("./systemSetting");
 const SecurityActivity = require("./securityactivity");
 
+// ✅ NEW
+const StockTracker = require("./stocktrackker");
+
 // ================= USER =================
 User.belongsTo(Role, { foreignKey: "role_id", as: "role" });
 Role.hasMany(User, { foreignKey: "role_id", as: "users" });
@@ -29,42 +32,167 @@ Branch.hasMany(User, { foreignKey: "branch_id", as: "users" });
 User.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
 
 // ================= STOCK MOVEMENT =================
-Stock.hasMany(StockMovement, { foreignKey: "stock_id", as: "movements" });
-StockMovement.belongsTo(Stock, { foreignKey: "stock_id", as: "stock" });
+Stock.hasMany(StockMovement, {
+  foreignKey: "stock_id",
+  as: "movements",
+});
+
+StockMovement.belongsTo(Stock, {
+  foreignKey: "stock_id",
+  as: "stock",
+});
 
 // ================= STOCK =================
-Branch.hasMany(Stock, { foreignKey: "branch_id", as: "stocks" });
-Stock.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Branch.hasMany(Stock, {
+  foreignKey: "branch_id",
+  as: "stocks",
+});
 
-User.hasMany(Stock, { foreignKey: "owner_id", as: "stocks" });
-Stock.belongsTo(User, { foreignKey: "owner_id", as: "owner" });
+Stock.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
+
+User.hasMany(Stock, {
+  foreignKey: "owner_id",
+  as: "stocks",
+});
+
+Stock.belongsTo(User, {
+  foreignKey: "owner_id",
+  as: "owner",
+});
+
+// =====================================================
+// ✅ STOCK TRACKER RELATIONS
+// =====================================================
+
+// Stock → StockTracker
+Stock.hasMany(StockTracker, {
+  foreignKey: "stock_id",
+  as: "trackers",
+});
+
+StockTracker.belongsTo(Stock, {
+  foreignKey: "stock_id",
+  as: "stock",
+});
+
+// Branch → StockTracker
+Branch.hasMany(StockTracker, {
+  foreignKey: "branch_id",
+  as: "stockTrackers",
+});
+
+StockTracker.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
+
+// Parent Child Batch Relation
+StockTracker.belongsTo(StockTracker, {
+  foreignKey: "parent_batch_id",
+  as: "parentBatch",
+});
+
+StockTracker.hasMany(StockTracker, {
+  foreignKey: "parent_batch_id",
+  as: "childBatches",
+});
+
+// Tracker → Movements
+StockTracker.hasMany(StockMovement, {
+  foreignKey: "batch_id",
+  as: "movements",
+});
+
+StockMovement.belongsTo(StockTracker, {
+  foreignKey: "batch_id",
+  as: "tracker",
+});
 
 // ================= LEDGER =================
-Branch.hasMany(Ledger, { foreignKey: "branch_id", as: "ledgerEntries" });
-Ledger.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Branch.hasMany(Ledger, {
+  foreignKey: "branch_id",
+  as: "ledgerEntries",
+});
 
-Stock.hasMany(Ledger, { foreignKey: "stock_id", as: "ledgerEntries" });
-Ledger.belongsTo(Stock, { foreignKey: "stock_id", as: "stock" });
+Ledger.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
-User.hasMany(Ledger, { foreignKey: "created_by", as: "ledgerCreated" });
-Ledger.belongsTo(User, { foreignKey: "created_by", as: "creator" });
+Stock.hasMany(Ledger, {
+  foreignKey: "stock_id",
+  as: "ledgerEntries",
+});
+
+Ledger.belongsTo(Stock, {
+  foreignKey: "stock_id",
+  as: "stock",
+});
+
+User.hasMany(Ledger, {
+  foreignKey: "created_by",
+  as: "ledgerCreated",
+});
+
+Ledger.belongsTo(User, {
+  foreignKey: "created_by",
+  as: "creator",
+});
 
 // ================= CLIENT =================
-Branch.hasMany(Client, { foreignKey: "branch_id", as: "clients" });
-Client.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Branch.hasMany(Client, {
+  foreignKey: "branch_id",
+  as: "clients",
+});
 
-Client.hasMany(ClientLedger, { foreignKey: "client_id", as: "ledger" });
-ClientLedger.belongsTo(Client, { foreignKey: "client_id", as: "client" });
+Client.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
-Branch.hasMany(ClientLedger, { foreignKey: "branch_id", as: "clientLedger" });
-ClientLedger.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Client.hasMany(ClientLedger, {
+  foreignKey: "client_id",
+  as: "ledger",
+});
+
+ClientLedger.belongsTo(Client, {
+  foreignKey: "client_id",
+  as: "client",
+});
+
+Branch.hasMany(ClientLedger, {
+  foreignKey: "branch_id",
+  as: "clientLedger",
+});
+
+ClientLedger.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
 // ================= QUOTATION =================
-Client.hasMany(Quotation, { foreignKey: "client_id", as: "quotations" });
-Quotation.belongsTo(Client, { foreignKey: "client_id", as: "client" });
+Client.hasMany(Quotation, {
+  foreignKey: "client_id",
+  as: "quotations",
+});
 
-Branch.hasMany(Quotation, { foreignKey: "branch_id", as: "quotations" });
-Quotation.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Quotation.belongsTo(Client, {
+  foreignKey: "client_id",
+  as: "client",
+});
+
+Branch.hasMany(Quotation, {
+  foreignKey: "branch_id",
+  as: "quotations",
+});
+
+Quotation.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
 Quotation.hasMany(QuotationItem, {
   foreignKey: "quotation_id",
@@ -77,11 +205,25 @@ QuotationItem.belongsTo(Quotation, {
 });
 
 // ================= INVOICE =================
-Client.hasMany(Invoice, { foreignKey: "client_id", as: "invoices" });
-Invoice.belongsTo(Client, { foreignKey: "client_id", as: "client" });
+Client.hasMany(Invoice, {
+  foreignKey: "client_id",
+  as: "invoices",
+});
 
-Branch.hasMany(Invoice, { foreignKey: "branch_id", as: "invoices" });
-Invoice.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+Invoice.belongsTo(Client, {
+  foreignKey: "client_id",
+  as: "client",
+});
+
+Branch.hasMany(Invoice, {
+  foreignKey: "branch_id",
+  as: "invoices",
+});
+
+Invoice.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
 Invoice.hasMany(InvoiceItem, {
   foreignKey: "invoice_id",
@@ -94,54 +236,120 @@ InvoiceItem.belongsTo(Invoice, {
 });
 
 // ================= PASSWORD RESET =================
-User.hasMany(PasswordReset, { foreignKey: "user_id", as: "passwordResets" });
-PasswordReset.belongsTo(User, { foreignKey: "user_id", as: "user" });
+User.hasMany(PasswordReset, {
+  foreignKey: "user_id",
+  as: "passwordResets",
+});
 
-Branch.hasMany(PasswordReset, { foreignKey: "branch_id", as: "passwordResets" });
-PasswordReset.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+PasswordReset.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
+
+Branch.hasMany(PasswordReset, {
+  foreignKey: "branch_id",
+  as: "passwordResets",
+});
+
+PasswordReset.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
 // ================= NOTIFICATION =================
-User.hasMany(Notification, { foreignKey: "user_id", as: "notifications" });
-Notification.belongsTo(User, { foreignKey: "user_id", as: "user" });
+User.hasMany(Notification, {
+  foreignKey: "user_id",
+  as: "notifications",
+});
+
+Notification.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
 
 // ================= RECENT ACTIVITY =================
-User.hasMany(RecentActivity, { foreignKey: "user_id", as: "activities" });
-RecentActivity.belongsTo(User, { foreignKey: "user_id", as: "user" });
+User.hasMany(RecentActivity, {
+  foreignKey: "user_id",
+  as: "activities",
+});
 
-Branch.hasMany(RecentActivity, { foreignKey: "branch_id", as: "recentActivities" });
-RecentActivity.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+RecentActivity.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
+
+Branch.hasMany(RecentActivity, {
+  foreignKey: "branch_id",
+  as: "recentActivities",
+});
+
+RecentActivity.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 
 // ================= SYSTEM SETTINGS =================
-User.hasMany(SystemSetting, { foreignKey: "created_by", as: "createdSettings" });
-User.hasMany(SystemSetting, { foreignKey: "updated_by", as: "updatedSettings" });
+User.hasMany(SystemSetting, {
+  foreignKey: "created_by",
+  as: "createdSettings",
+});
 
-SystemSetting.belongsTo(User, { foreignKey: "created_by", as: "creator" });
-SystemSetting.belongsTo(User, { foreignKey: "updated_by", as: "updater" });
+User.hasMany(SystemSetting, {
+  foreignKey: "updated_by",
+  as: "updatedSettings",
+});
+
+SystemSetting.belongsTo(User, {
+  foreignKey: "created_by",
+  as: "creator",
+});
+
+SystemSetting.belongsTo(User, {
+  foreignKey: "updated_by",
+  as: "updater",
+});
 
 // ================= SECURITY ACTIVITY =================
-User.hasMany(SecurityActivity, { foreignKey: "user_id", as: "security_activities" });
-SecurityActivity.belongsTo(User, { foreignKey: "user_id", as: "user" });
+User.hasMany(SecurityActivity, {
+  foreignKey: "user_id",
+  as: "security_activities",
+});
+
+SecurityActivity.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
 
 // ================= INIT DB =================
 const initDB = async () => {
   try {
     await sequelize.authenticate();
+
     console.log("✅ DB connected");
 
     const shouldInit =
-      String(process.env.INIT_DB).trim().toLowerCase() === "true";
+      String(process.env.INIT_DB)
+        .trim()
+        .toLowerCase() === "true";
 
     if (shouldInit) {
+
       // ✅ Parent tables first
       await Role.sync();
       await Branch.sync();
 
       // ✅ Then dependent tables
       await User.sync();
+
       await Stock.sync();
+
+      // ✅ NEW
+      await StockTracker.sync();
+
       await Ledger.sync();
       await Client.sync();
       await ClientLedger.sync();
+
       await StockMovement.sync();
 
       await Quotation.sync();
@@ -156,9 +364,15 @@ const initDB = async () => {
       await SystemSetting.sync();
       await SecurityActivity.sync();
 
-      console.log("✅ All tables created in correct order");
+      console.log(
+        "✅ All tables created in correct order"
+      );
+
     } else {
-      console.log("ℹ️ INIT_DB=false, skipping table creation");
+
+      console.log(
+        "ℹ️ INIT_DB=false, skipping table creation"
+      );
     }
 
     const roles = [
@@ -185,8 +399,11 @@ const initDB = async () => {
     }
 
     console.log("✅ Roles initialized");
+
   } catch (error) {
+
     console.error("❌ DB init error:", error);
+
     throw error;
   }
 };
@@ -198,6 +415,7 @@ module.exports = {
   User,
   Role,
   Stock,
+  StockTracker,
   Branch,
   Ledger,
 
