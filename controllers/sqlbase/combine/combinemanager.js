@@ -2863,9 +2863,7 @@ exports.getStateDetailsDashboard = async (req, res) => {
           0
         ) AS "currentStock",
 
-        // =====================================
-        // NOW FROM STOCK MOVEMENTS
-        // =====================================
+     
         COALESCE(
           mv."stockIn",
           0
@@ -2917,9 +2915,7 @@ exports.getStateDetailsDashboard = async (req, res) => {
 
       ) st ON st.branch_id = b.id
 
-      // =====================================
-      // STOCK MOVEMENTS
-      // =====================================
+    
       LEFT JOIN (
 
         SELECT 
