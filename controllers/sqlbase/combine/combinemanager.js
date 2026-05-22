@@ -573,7 +573,7 @@ exports.addStockItem = async (req, res) => {
         existingStock.batch_no;
 
       existingStock.aging =
-        aging ||
+        aging ??
         existingStock.aging;
 
       existingStock.status =
@@ -623,12 +623,14 @@ exports.addStockItem = async (req, res) => {
         existingStock.item_code;
 
       existingStock.specification =
-        specification ||
+        specification ??
         existingStock.specification;
 
-      existingStock.gst_percent =
-        gst_percent ||
-        existingStock.gst_percent;
+      // GST LOGIC
+      if (gst_percent !== undefined) {
+        existingStock.gst_percent =
+          gst_percent;
+      }
 
       existingStock.rack_no =
         rack_no ||
@@ -639,7 +641,7 @@ exports.addStockItem = async (req, res) => {
         existingStock.location;
 
       existingStock.min_stock_level =
-        min_stock_level ||
+        min_stock_level ??
         existingStock.min_stock_level;
 
       existingStock.expiry_date =
@@ -647,7 +649,7 @@ exports.addStockItem = async (req, res) => {
         existingStock.expiry_date;
 
       existingStock.warranty_months =
-        warranty_months ||
+        warranty_months ??
         existingStock.warranty_months;
 
       await existingStock.save({
@@ -705,7 +707,7 @@ exports.addStockItem = async (req, res) => {
         batch_no:
           batch_no || null,
 
-        aging: aging || 0,
+        aging: aging ?? 0,
 
         status: status || "GOOD",
 
@@ -748,10 +750,11 @@ exports.addStockItem = async (req, res) => {
           item_code || null,
 
         specification:
-          specification || null,
+          specification ?? null,
 
+        // GST LOGIC
         gst_percent:
-          gst_percent || 18,
+          gst_percent ?? null,
 
         rack_no:
           rack_no || null,
@@ -760,13 +763,13 @@ exports.addStockItem = async (req, res) => {
           location || null,
 
         min_stock_level:
-          min_stock_level || 0,
+          min_stock_level ?? 0,
 
         expiry_date:
           expiry_date || null,
 
         warranty_months:
-          warranty_months || 0,
+          warranty_months ?? 0,
       },
       {
         transaction,
