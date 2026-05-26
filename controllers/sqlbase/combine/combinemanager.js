@@ -450,16 +450,18 @@ exports.getInventoryDashboardCharts = async (req, res) => {
 
 
 exports.addStockItem = async (req, res) => {
-  const transaction = await sequelize.transaction();
+
+  const transaction =
+    await sequelize.transaction();
 
   try {
+
     const {
       item,
       category,
       quantity,
       rate,
 
-      // OPTIONAL FIELDS
       hsn,
       grn,
       batch_no,
@@ -496,36 +498,47 @@ exports.addStockItem = async (req, res) => {
     } = req.body;
 
     // ===============================
-    // REQUIRED VALIDATION
+    // VALIDATION
     // ===============================
 
     if (!item) {
+
       await transaction.rollback();
 
       return res.status(400).json({
         success: false,
         message: "Item is required",
       });
+
     }
 
     // ===============================
-    // VALUE CALCULATION
+    // CALCULATIONS
     // ===============================
 
-    const finalQuantity = Number(
-      quantity || 0
-    );
+    const finalQuantity =
+      Number(quantity || 0);
 
-    const finalRate = Number(
-      rate || 0
-    );
+    const finalRate =
+      Number(rate || 0);
 
     const finalValue =
       finalQuantity * finalRate;
 
+    const finalBundleSize =
+      bundle_size || 1;
+
     // ===============================
-    // DUPLICATE CHECK
-    // item + size + type + branch
+    // AUTO ITEM DESCRIPTION
+    // ===============================
+
+    const autoItemDescription =
+      `${brand || ""} ${type || ""} ${item || ""} ${size || ""} ${bundle_size ? `(${bundle_size})` : ""} ${color || ""}`
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // ===============================
+    // FIND EXISTING STOCK
     // ===============================
 
     const existingStock =
@@ -534,17 +547,25 @@ exports.addStockItem = async (req, res) => {
           item,
           branch_id:
             req.user.branch_id,
+
           size: size || null,
+
           type: type || null,
         },
+
         transaction,
       });
 
-    // ===============================
-    // UPDATE EXISTING STOCK
-    // ===============================
+    // =====================================================
+    // EXISTING STOCK FLOW
+    // =====================================================
 
     if (existingStock) {
+
+      // ==========================================
+      // UPDATE STOCK QTY
+      // ==========================================
+
       existingStock.quantity =
         Number(existingStock.quantity) +
         finalQuantity;
@@ -557,265 +578,365 @@ exports.addStockItem = async (req, res) => {
         Number(existingStock.quantity) *
         Number(existingStock.rate);
 
-      // OPTIONAL UPDATE
-      existingStock.category =
-        category ||
-        existingStock.category;
-
-      existingStock.hsn =
-        hsn || existingStock.hsn;
-
-      existingStock.grn =
-        grn || existingStock.grn;
-
-      existingStock.batch_no =
-        batch_no ||
-        existingStock.batch_no;
-
-      existingStock.aging =
-        aging ??
-        existingStock.aging;
-
-      existingStock.status =
-        status ||
-        existingStock.status;
-
-      existingStock.po_number =
-        po_number ||
-        existingStock.po_number;
-
-      existingStock.sku =
-        sku || existingStock.sku;
-
-      existingStock.sub_category =
-        sub_category ||
-        existingStock.sub_category;
-
-      existingStock.brand =
-        brand ||
-        existingStock.brand;
-
-      existingStock.color =
-        color ||
-        existingStock.color;
-
-      existingStock.bundle_size =
-        bundle_size ||
-        existingStock.bundle_size;
-
-      existingStock.unit =
-        unit || existingStock.unit;
-
-      existingStock.model_no =
-        model_no ||
-        existingStock.model_no;
-
-      existingStock.serial_no =
-        serial_no ||
-        existingStock.serial_no;
+      // ==========================================
+      // AUTO DESCRIPTION UPDATE
+      // ==========================================
 
       existingStock.item_description =
-        item_description ||
-        existingStock.item_description;
-
-      existingStock.item_code =
-        item_code ||
-        existingStock.item_code;
-
-      existingStock.specification =
-        specification ??
-        existingStock.specification;
-
-      // GST LOGIC
-      if (gst_percent !== undefined) {
-        existingStock.gst_percent =
-          gst_percent;
-      }
-
-      existingStock.rack_no =
-        rack_no ||
-        existingStock.rack_no;
-
-      existingStock.location =
-        location ||
-        existingStock.location;
-
-      existingStock.min_stock_level =
-        min_stock_level ??
-        existingStock.min_stock_level;
-
-      existingStock.expiry_date =
-        expiry_date ||
-        existingStock.expiry_date;
-
-      existingStock.warranty_months =
-        warranty_months ??
-        existingStock.warranty_months;
+        existingStock.item_description ||
+        autoItemDescription;
 
       await existingStock.save({
         transaction,
       });
 
-      // ===============================
+      // ==========================================
       // STOCK MOVEMENT
-      // ===============================
+      // ==========================================
 
       await StockMovement.create(
         {
-          stock_id: existingStock.id,
+          stock_id:
+            existingStock.id,
 
           branch_id:
             req.user.branch_id,
 
           type: "IN",
 
-          quantity: finalQuantity,
+          quantity:
+            finalQuantity,
         },
         { transaction }
       );
+
+      // ==========================================
+      // CHECK BATCH EXISTS
+      // ==========================================
+
+      const existingBatch =
+        await InventoryBatch.findOne({
+          where: {
+            batch_no,
+            stock_id:
+              existingStock.id,
+          },
+
+          transaction,
+        });
+
+      // ==========================================
+      // SAME BATCH → UPDATE BATCH QTY
+      // ==========================================
+
+      if (existingBatch) {
+
+        existingBatch.total_bundle =
+          Number(existingBatch.total_bundle) +
+          finalQuantity;
+
+        existingBatch.available_bundle =
+          Number(existingBatch.available_bundle) +
+          finalQuantity;
+
+        await existingBatch.save({
+          transaction,
+        });
+
+      }
+
+      // ==========================================
+      // NEW BATCH → CREATE NEW BATCH
+      // ==========================================
+
+      else {
+
+        const year =
+          new Date().getFullYear();
+
+        const lastBatch =
+          await InventoryBatch.findOne({
+            order: [["id", "DESC"]],
+            transaction,
+          });
+
+        const nextId =
+          lastBatch
+            ? lastBatch.id + 1
+            : 1;
+
+        const autoBatchNo =
+          `BAT-${year}-${String(nextId).padStart(
+            5,
+            "0"
+          )}`;
+
+        await createBatch({
+
+          batch_no:
+            batch_no || autoBatchNo,
+
+          stock_id:
+            existingStock.id,
+
+          parent_batch_id:
+            null,
+
+          branch_id:
+            req.user.branch_id,
+
+          total_bundle:
+            finalQuantity,
+
+          available_bundle:
+            finalQuantity,
+
+          bundle_size:
+            finalBundleSize,
+
+          item_name:
+            item,
+
+          status:
+            "ACTIVE",
+
+          transaction,
+        });
+
+      }
 
       await transaction.commit();
 
       return res.status(200).json({
         success: true,
+
         message:
-          "Existing stock updated successfully",
+          existingBatch
+            ? "Existing stock and batch updated successfully"
+            : "Existing stock updated and new batch created successfully",
+
         data: existingStock,
       });
+
     }
 
-    // ===============================
-    // CREATE NEW STOCK
-    // ===============================
+    // =====================================================
+    // NEW STOCK FLOW
+    // =====================================================
 
-    const newItem = await Stock.create(
-      {
-        item,
+    const newItem =
+      await Stock.create(
+        {
+          item,
 
-        category: category || null,
+          category:
+            category || null,
 
-        quantity: finalQuantity,
+          quantity:
+            finalQuantity,
 
-        rate: finalRate,
+          rate:
+            finalRate,
 
-        value: finalValue,
+          value:
+            finalValue,
 
-        hsn: hsn || null,
+          hsn:
+            hsn || null,
 
-        grn: grn || null,
+          grn:
+            grn || null,
 
-        batch_no:
-          batch_no || null,
+          batch_no:
+            batch_no || null,
 
-        aging: aging ?? 0,
+          aging:
+            aging ?? 0,
 
-        status: status || "GOOD",
+          status:
+            status || "GOOD",
 
-        po_number:
-          po_number || "N/A",
+          po_number:
+            po_number || "N/A",
 
-        owner_id: req.user.id,
+          owner_id:
+            req.user.id,
 
-        branch_id:
-          req.user.branch_id,
+          branch_id:
+            req.user.branch_id,
 
-        sku: sku || null,
+          sku:
+            sku || null,
 
-        sub_category:
-          sub_category || null,
+          sub_category:
+            sub_category || null,
 
-        brand: brand || null,
+          brand:
+            brand || null,
 
-        type: type || null,
+          type:
+            type || null,
 
-        size: size || null,
+          size:
+            size || null,
 
-        color: color || null,
+          color:
+            color || null,
 
-        bundle_size:
-          bundle_size || null,
+          bundle_size:
+            finalBundleSize,
 
-        unit: unit || "PCS",
+          unit:
+            unit || "PCS",
 
-        model_no:
-          model_no || null,
+          model_no:
+            model_no || null,
 
-        serial_no:
-          serial_no || null,
+          serial_no:
+            serial_no || null,
 
-        item_description:
-          item_description || null,
+          // ==========================================
+          // AUTO ITEM DESCRIPTION
+          // ==========================================
 
-        item_code:
-          item_code || null,
+          item_description:
+            item_description ||
+            autoItemDescription,
 
-        specification:
-          specification ?? null,
+          item_code:
+            item_code || null,
 
-        // GST LOGIC
-        gst_percent:
-          gst_percent ?? null,
+          specification:
+            specification ?? null,
 
-        rack_no:
-          rack_no || null,
+          gst_percent:
+            gst_percent ?? null,
 
-        location:
-          location || null,
+          rack_no:
+            rack_no || null,
 
-        min_stock_level:
-          min_stock_level ?? 0,
+          location:
+            location || null,
 
-        expiry_date:
-          expiry_date || null,
+          min_stock_level:
+            min_stock_level ?? 0,
 
-        warranty_months:
-          warranty_months ?? 0,
-      },
-      {
-        transaction,
-      }
-    );
+          expiry_date:
+            expiry_date || null,
 
-    // ===============================
+          warranty_months:
+            warranty_months ?? 0,
+        },
+
+        { transaction }
+      );
+
+    // ==========================================
     // STOCK MOVEMENT
-    // ===============================
+    // ==========================================
 
     await StockMovement.create(
       {
-        stock_id: newItem.id,
+        stock_id:
+          newItem.id,
 
         branch_id:
           req.user.branch_id,
 
-        type: "IN",
+        type:
+          "IN",
 
-        quantity: finalQuantity,
+        quantity:
+          finalQuantity,
       },
       { transaction }
     );
 
-    // ===============================
+    // ==========================================
+    // AUTO BATCH NO
+    // ==========================================
+
+    const year =
+      new Date().getFullYear();
+
+    const lastBatch =
+      await InventoryBatch.findOne({
+        order: [["id", "DESC"]],
+        transaction,
+      });
+
+    const nextId =
+      lastBatch
+        ? lastBatch.id + 1
+        : 1;
+
+    const autoBatchNo =
+      `BAT-${year}-${String(nextId).padStart(
+        5,
+        "0"
+      )}`;
+
+    // ==========================================
+    // CREATE BATCH
+    // ==========================================
+
+    await createBatch({
+
+      batch_no:
+        batch_no || autoBatchNo,
+
+      stock_id:
+        newItem.id,
+
+      parent_batch_id:
+        null,
+
+      branch_id:
+        req.user.branch_id,
+
+      total_bundle:
+        finalQuantity,
+
+      available_bundle:
+        finalQuantity,
+
+      bundle_size:
+        finalBundleSize,
+
+      item_name:
+        item,
+
+      status:
+        "ACTIVE",
+
+      transaction,
+    });
+
+    // ==========================================
     // COMMIT
-    // ===============================
+    // ==========================================
 
     await transaction.commit();
 
     return res.status(201).json({
       success: true,
+
       message:
         "Stock item added successfully",
-      data: newItem,
+
+      data:
+        newItem,
     });
+
   } catch (err) {
-    // ===============================
-    // ROLLBACK
-    // ===============================
 
     if (
       transaction &&
       !transaction.finished
     ) {
+
       await transaction.rollback();
+
     }
 
     console.error(err);
@@ -824,9 +945,9 @@ exports.addStockItem = async (req, res) => {
       success: false,
       message: err.message,
     });
+
   }
 };
-
 
 exports.bulkUploadStock = async (req, res) => {
   const transaction = await sequelize.transaction();
