@@ -10,6 +10,8 @@ const Ledger = require("./ladger");
 const Client = require("./client");
 const ClientLedger = require("./client.ladger");
 
+const BatchTimeline = require("./timeline");
+
 const { Quotation, QuotationItem } = require("./Quotation");
 
 const Invoice = require("./invoice");
@@ -21,17 +23,39 @@ const RecentActivity = require("./recentactivity");
 const SystemSetting = require("./systemSetting");
 const SecurityActivity = require("./securityactivity");
 
-// ✅ NEW
-const StockTracker = require("./stocktrackker");
+// ✅ USE THIS ONLY
+const InventoryBatch = require("./InventoryBatch");
 
-// ================= USER =================
-User.belongsTo(Role, { foreignKey: "role_id", as: "role" });
-Role.hasMany(User, { foreignKey: "role_id", as: "users" });
 
-Branch.hasMany(User, { foreignKey: "branch_id", as: "users" });
-User.belongsTo(Branch, { foreignKey: "branch_id", as: "branch" });
+// =====================================================
+// USER
+// =====================================================
 
-// ================= STOCK MOVEMENT =================
+User.belongsTo(Role, {
+  foreignKey: "role_id",
+  as: "role",
+});
+
+Role.hasMany(User, {
+  foreignKey: "role_id",
+  as: "users",
+});
+
+Branch.hasMany(User, {
+  foreignKey: "branch_id",
+  as: "users",
+});
+
+User.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
+
+
+// =====================================================
+// STOCK MOVEMENT
+// =====================================================
+
 Stock.hasMany(StockMovement, {
   foreignKey: "stock_id",
   as: "movements",
@@ -42,7 +66,11 @@ StockMovement.belongsTo(Stock, {
   as: "stock",
 });
 
-// ================= STOCK =================
+
+// =====================================================
+// STOCK
+// =====================================================
+
 Branch.hasMany(Stock, {
   foreignKey: "branch_id",
   as: "stocks",
@@ -63,55 +91,60 @@ Stock.belongsTo(User, {
   as: "owner",
 });
 
+
 // =====================================================
-// ✅ STOCK TRACKER RELATIONS
+// INVENTORY BATCH RELATIONS
 // =====================================================
 
-// Stock → StockTracker
-Stock.hasMany(StockTracker, {
+// Stock → InventoryBatch
+Stock.hasMany(InventoryBatch, {
   foreignKey: "stock_id",
-  as: "trackers",
+  as: "batches",
 });
 
-StockTracker.belongsTo(Stock, {
+InventoryBatch.belongsTo(Stock, {
   foreignKey: "stock_id",
   as: "stock",
 });
 
-// Branch → StockTracker
-Branch.hasMany(StockTracker, {
+// Branch → InventoryBatch
+Branch.hasMany(InventoryBatch, {
   foreignKey: "branch_id",
-  as: "stockTrackers",
+  as: "inventoryBatches",
 });
 
-StockTracker.belongsTo(Branch, {
+InventoryBatch.belongsTo(Branch, {
   foreignKey: "branch_id",
   as: "branch",
 });
 
 // Parent Child Batch Relation
-StockTracker.belongsTo(StockTracker, {
+InventoryBatch.belongsTo(InventoryBatch, {
   foreignKey: "parent_batch_id",
   as: "parentBatch",
 });
 
-StockTracker.hasMany(StockTracker, {
+InventoryBatch.hasMany(InventoryBatch, {
   foreignKey: "parent_batch_id",
   as: "childBatches",
 });
 
-// Tracker → Movements
-StockTracker.hasMany(StockMovement, {
+// Batch → Movements
+InventoryBatch.hasMany(StockMovement, {
   foreignKey: "batch_id",
   as: "movements",
 });
 
-StockMovement.belongsTo(StockTracker, {
+StockMovement.belongsTo(InventoryBatch, {
   foreignKey: "batch_id",
-  as: "tracker",
+  as: "batch",
 });
 
-// ================= LEDGER =================
+
+// =====================================================
+// LEDGER
+// =====================================================
+
 Branch.hasMany(Ledger, {
   foreignKey: "branch_id",
   as: "ledgerEntries",
@@ -142,7 +175,11 @@ Ledger.belongsTo(User, {
   as: "creator",
 });
 
-// ================= CLIENT =================
+
+// =====================================================
+// CLIENT
+// =====================================================
+
 Branch.hasMany(Client, {
   foreignKey: "branch_id",
   as: "clients",
@@ -173,7 +210,11 @@ ClientLedger.belongsTo(Branch, {
   as: "branch",
 });
 
-// ================= QUOTATION =================
+
+// =====================================================
+// QUOTATION
+// =====================================================
+
 Client.hasMany(Quotation, {
   foreignKey: "client_id",
   as: "quotations",
@@ -204,7 +245,11 @@ QuotationItem.belongsTo(Quotation, {
   as: "quotation",
 });
 
-// ================= INVOICE =================
+
+// =====================================================
+// INVOICE
+// =====================================================
+
 Client.hasMany(Invoice, {
   foreignKey: "client_id",
   as: "invoices",
@@ -235,7 +280,36 @@ InvoiceItem.belongsTo(Invoice, {
   as: "invoice",
 });
 
-// ================= PASSWORD RESET =================
+
+// =====================================================
+// BATCH TIMELINE
+// =====================================================
+
+Stock.hasMany(BatchTimeline, {
+  foreignKey: "stock_id",
+  as: "timelines",
+});
+
+BatchTimeline.belongsTo(Stock, {
+  foreignKey: "stock_id",
+  as: "stock",
+});
+
+InventoryBatch.hasMany(BatchTimeline, {
+  foreignKey: "batch_id",
+  as: "batchTimelines",
+});
+
+BatchTimeline.belongsTo(InventoryBatch, {
+  foreignKey: "batch_id",
+  as: "batch",
+});
+
+
+// =====================================================
+// PASSWORD RESET
+// =====================================================
+
 User.hasMany(PasswordReset, {
   foreignKey: "user_id",
   as: "passwordResets",
@@ -256,7 +330,11 @@ PasswordReset.belongsTo(Branch, {
   as: "branch",
 });
 
-// ================= NOTIFICATION =================
+
+// =====================================================
+// NOTIFICATION
+// =====================================================
+
 User.hasMany(Notification, {
   foreignKey: "user_id",
   as: "notifications",
@@ -267,7 +345,11 @@ Notification.belongsTo(User, {
   as: "user",
 });
 
-// ================= RECENT ACTIVITY =================
+
+// =====================================================
+// RECENT ACTIVITY
+// =====================================================
+
 User.hasMany(RecentActivity, {
   foreignKey: "user_id",
   as: "activities",
@@ -288,7 +370,11 @@ RecentActivity.belongsTo(Branch, {
   as: "branch",
 });
 
-// ================= SYSTEM SETTINGS =================
+
+// =====================================================
+// SYSTEM SETTINGS
+// =====================================================
+
 User.hasMany(SystemSetting, {
   foreignKey: "created_by",
   as: "createdSettings",
@@ -309,7 +395,11 @@ SystemSetting.belongsTo(User, {
   as: "updater",
 });
 
-// ================= SECURITY ACTIVITY =================
+
+// =====================================================
+// SECURITY ACTIVITY
+// =====================================================
+
 User.hasMany(SecurityActivity, {
   foreignKey: "user_id",
   as: "security_activities",
@@ -320,7 +410,11 @@ SecurityActivity.belongsTo(User, {
   as: "user",
 });
 
-// ================= INIT DB =================
+
+// =====================================================
+// INIT DB
+// =====================================================
+
 const initDB = async () => {
   try {
     await sequelize.authenticate();
@@ -334,44 +428,53 @@ const initDB = async () => {
 
     if (shouldInit) {
 
-      // ✅ Parent tables first
+      // Parent Tables
       await Role.sync();
       await Branch.sync();
 
-      // ✅ Then dependent tables
+      // Main Tables
       await User.sync();
 
       await Stock.sync();
 
-      // ✅ NEW
-      await StockTracker.sync();
+      await InventoryBatch.sync();
 
       await Ledger.sync();
+
       await Client.sync();
+
       await ClientLedger.sync();
 
       await StockMovement.sync();
 
       await Quotation.sync();
+
       await QuotationItem.sync();
 
       await Invoice.sync();
+
       await InvoiceItem.sync();
 
+      await BatchTimeline.sync();
+
       await Notification.sync();
+
       await PasswordReset.sync();
+
       await RecentActivity.sync();
+
       await SystemSetting.sync();
+
       await SecurityActivity.sync();
 
       console.log(
-        "✅ All tables created in correct order"
+        "✅ All tables created successfully"
       );
 
     } else {
 
       console.log(
-        "ℹ️ INIT_DB=false, skipping table creation"
+        "ℹ️ INIT_DB=false, skipping sync"
       );
     }
 
@@ -402,11 +505,19 @@ const initDB = async () => {
 
   } catch (error) {
 
-    console.error("❌ DB init error:", error);
+    console.error(
+      "❌ DB init error:",
+      error
+    );
 
     throw error;
   }
 };
+
+
+// =====================================================
+// EXPORTS
+// =====================================================
 
 module.exports = {
   sequelize,
@@ -414,13 +525,18 @@ module.exports = {
 
   User,
   Role,
+
   Stock,
-  StockTracker,
+
+  InventoryBatch,
+
   Branch,
+
   Ledger,
 
   Client,
   ClientLedger,
+
   StockMovement,
 
   Quotation,
@@ -429,9 +545,14 @@ module.exports = {
   Invoice,
   InvoiceItem,
 
+  BatchTimeline,
+
   Notification,
   PasswordReset,
+
   RecentActivity,
+
   SystemSetting,
+
   SecurityActivity,
 };

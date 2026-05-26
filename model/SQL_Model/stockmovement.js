@@ -9,33 +9,57 @@ const StockMovement = sequelize.define(
       allowNull: false,
     },
 
-    // 🔥 NEW
+    // =====================================================
+    // BATCH
+    // =====================================================
+
     batch_id: {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+
+    // =====================================================
+    // BRANCH
+    // =====================================================
 
     branch_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
     },
 
-    // 🔥 NEW
     from_branch_id: {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
 
-    // 🔥 NEW
     to_branch_id: {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
 
+    // =====================================================
+    // CLIENT + INVOICE
+    // =====================================================
+
+    client_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+
+    invoice_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+
+    // =====================================================
+    // MOVEMENT TYPE
+    // =====================================================
+
     type: {
       type: DataTypes.ENUM(
         "IN",
         "OUT",
+        "SALE",
         "DAMAGE",
         "RETURN",
         "TRANSFER",
@@ -44,18 +68,25 @@ const StockMovement = sequelize.define(
       allowNull: false,
     },
 
+    // =====================================================
+    // QUANTITY
+    // =====================================================
+
     quantity: {
       type: DataTypes.FLOAT,
       allowNull: false,
       defaultValue: 0,
     },
 
-    // 🔥 NEW
     bundle_quantity: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.FLOAT,
       allowNull: true,
       defaultValue: 0,
     },
+
+    // =====================================================
+    // EXTRA DETAILS
+    // =====================================================
 
     remarks: {
       type: DataTypes.STRING,
@@ -67,7 +98,6 @@ const StockMovement = sequelize.define(
       allowNull: true,
     },
 
-    // 🔥 NEW
     reference_type: {
       type: DataTypes.STRING,
       allowNull: true,

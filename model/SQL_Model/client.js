@@ -32,6 +32,14 @@ const Client = sequelize.define("Client", {
     type: DataTypes.FLOAT,
     defaultValue: 0
   },
+  client_type: {
+   type: DataTypes.ENUM("CUSTOMER", "BRANCH"),
+   defaultValue: "CUSTOMER"
+},
+
+linked_branch_id: {
+   type: DataTypes.INTEGER
+},
 
   branch_id: {
     type: DataTypes.INTEGER,
