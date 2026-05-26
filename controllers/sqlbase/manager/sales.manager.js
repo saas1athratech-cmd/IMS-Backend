@@ -865,6 +865,7 @@ exports.createQuotation = async (req, res) => {
 };
 exports.getQuotationProducts = async (req, res) => {
   try {
+
     const branch_id = req.user?.branch_id;
 
     let {
@@ -881,91 +882,265 @@ exports.getQuotationProducts = async (req, res) => {
       });
     }
 
-    // pagination fix
-    page = parseInt(page) || 1;
-    limit = parseInt(limit) || 50;
+    // =========================
+    // PAGINATION
+    // =========================
+
+    page = parseInt(page, 10) || 1;
+    limit = parseInt(limit, 10) || 50;
 
     if (page < 1) page = 1;
     if (limit < 1) limit = 50;
-    if (limit > 50) limit = 50; // max 50 items
+    if (limit > 100) limit = 100;
 
     const offset = (page - 1) * limit;
 
+    // =========================
+    // FILTERS
+    // =========================
+
     const where = {
       branch_id,
+
       status: "GOOD",
+
+      // ✅ NOW 0 QTY ITEMS ALSO SHOW
       quantity: {
-        [Op.gt]: 0,
+        [Op.gte]: 0,
       },
     };
 
-    if (search.trim()) {
+    if (search?.trim()) {
       where.item = {
         [Op.iLike]: `%${search.trim()}%`,
       };
     }
 
-    if (category.trim()) {
+    if (category?.trim()) {
       where.category = category.trim();
     }
 
+    // =========================
+    // FETCH PRODUCTS
+    // =========================
+
     const { count, rows } = await Stock.findAndCountAll({
       where,
+
       attributes: [
         "id",
         "item",
         "category",
+
         "quantity",
+
         "rate",
         "value",
+
+        "unit",
         "hsn",
+
+        "sku",
+
+        "gst_percent",
+
         "status",
         "branch_id",
+
+        "specification",
+        "item_description",
+
+        // OPTIONAL PRODUCT FIELDS
+        "brand",
+        "sub_category",
+        "type",
+        "size",
+        "color",
+        "model_no",
+        "serial_no",
+        "item_code",
+        "rack_no",
+        "location",
+
+        "created_at",
       ],
+
       order: [["item", "ASC"]],
+
       limit,
       offset,
     });
 
+    // =========================
+    // PAGINATION INFO
+    // =========================
+
     const totalPages = Math.ceil(count / limit);
+
+    // =========================
+    // RESPONSE
+    // =========================
 
     return res.status(200).json({
       success: true,
-      message: "Quotation products fetched successfully",
+
+      message:
+        "Quotation products fetched successfully",
 
       pagination: {
         total_items: count,
+
         current_page: page,
+
         per_page: limit,
+
         total_pages: totalPages,
+
         has_next_page: page < totalPages,
+
         has_prev_page: page > 1,
       },
 
-      data: rows.map((s) => ({
-        stock_id: s.id,
-        product_name: s.item,
-        category: s.category || "",
-        available_qty: Number(s.quantity || 0),
-        unit_price: Number(s.rate || 0),
-        total_value: Number(s.value || 0),
-        hsn: s.hsn || "",
-        status: s.status || "",
-        branch_id: s.branch_id,
-        unit: "",
-      })),
+      data: rows.map((s) => {
+
+        const rate =
+          Number(s.rate || 0);
+
+        const gstPercent =
+          Number(s.gst_percent || 0);
+
+        return {
+
+          // =========================
+          // BASIC
+          // =========================
+
+          stock_id: s.id,
+
+          product_id: s.id,
+
+          product_name:
+            s.item || "",
+
+          category:
+            s.category || "",
+
+          sub_category:
+            s.sub_category || "",
+
+          brand:
+            s.brand || "",
+
+          type:
+            s.type || "",
+
+          status:
+            s.status || "",
+
+          branch_id:
+            s.branch_id,
+
+          // =========================
+          // STOCK
+          // =========================
+
+          available_qty:
+            Number(s.quantity || 0),
+
+          unit:
+            s.unit || "PCS",
+
+          // =========================
+          // PRICE
+          // =========================
+
+          unit_price:
+            rate,
+
+          total_value:
+            Number(s.value || 0),
+
+          // =========================
+          // GST
+          // =========================
+
+          gst_percent:
+            gstPercent,
+
+          cgst_percent:
+            gstPercent / 2,
+
+          sgst_percent:
+            gstPercent / 2,
+
+          // =========================
+          // PRODUCT DETAILS
+          // =========================
+
+          hsn:
+            s.hsn || "",
+
+          sku:
+            s.sku || "",
+
+          item_code:
+            s.item_code || "",
+
+          model_no:
+            s.model_no || "",
+
+          serial_no:
+            s.serial_no || "",
+
+          size:
+            s.size || "",
+
+          color:
+            s.color || "",
+
+          rack_no:
+            s.rack_no || "",
+
+          location:
+            s.location || "",
+
+          item_description:
+            s.item_description || "",
+
+          specifications:
+            s.specification || {},
+
+          // =========================
+          // UI HELPERS
+          // =========================
+
+          display_name:
+            s.item || "",
+
+          created_at:
+            s.created_at,
+        };
+      }),
     });
+
   } catch (error) {
-    console.error("getQuotationProducts error:", error);
+
+    console.error(
+      "getQuotationProducts error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch quotation products",
-      error: error.message,
+
+      message:
+        "Failed to fetch quotation products",
+
+      error:
+        error.message,
     });
   }
 };
-
 async function createInvoiceFromQuotation(quotationId, transaction) {
   const quotation = await Quotation.findByPk(quotationId, {
     transaction,
