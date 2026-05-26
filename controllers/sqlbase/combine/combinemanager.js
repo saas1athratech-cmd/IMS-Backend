@@ -5,6 +5,7 @@ const Stock = require("../../../model/SQL_Model/stock.record")
 const StockMovement = require("../../../model/SQL_Model/stockmovement");
 const { Branch, Ledger} = require("../../../model/SQL_Model");
 const { ClientLedger, Client } = require("../../../model/SQL_Model");
+const { InventoryBatch } = require("../../../model/SQL_Model");
 
 // const Stock = require("../../../model/SQL_Model/stock.record");
 // ============================
