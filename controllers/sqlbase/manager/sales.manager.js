@@ -331,24 +331,58 @@ exports.createQuotation = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
-    const { client, products, gst_percent = 0, valid_till } = req.body;
+    const {
+      client,
+      products,
+      gst_percent = 0,
+      valid_till
+    } = req.body;
+
     const branch_id = req.user.branch_id;
 
     if (!branch_id) {
       if (!t.finished) await t.rollback();
+
       return res.status(400).json({
         error: "branch_id missing in req.user",
       });
     }
 
-    if (!products || !Array.isArray(products) || products.length === 0) {
+    if (
+      !products ||
+      !Array.isArray(products) ||
+      products.length === 0
+    ) {
       if (!t.finished) await t.rollback();
-      return res.status(400).json({ error: "Products are required" });
+
+      return res.status(400).json({
+        error: "Products are required",
+      });
     }
 
-    const clientData = await getOrCreateClient({ ...client, branch_id }, t);
+    // =====================================
+    // CLIENT
+    // =====================================
+
+    const clientData =
+      await getOrCreateClient(
+        {
+          ...client,
+          branch_id,
+        },
+        t
+      );
+
+    // =====================================
+    // STOCK CHECK
+    // ONLY TRACK LOW STOCK
+    // DO NOT BLOCK QT CREATION
+    // =====================================
+
+    const lowStockItems = [];
 
     for (const p of products) {
+
       const stock = await Stock.findOne({
         where: {
           item: p.product_name,
@@ -357,100 +391,230 @@ exports.createQuotation = async (req, res) => {
         transaction: t,
       });
 
-      if (!stock) {
-        if (!t.finished) await t.rollback();
-        return res.status(400).json({
-          error: `Stock not found for ${p.product_name}`,
-        });
-      }
+      const availableQty =
+        Number(stock?.quantity || 0);
 
-      if (Number(stock.quantity || 0) < Number(p.quantity || 0)) {
-        if (!t.finished) await t.rollback();
-        return res.status(400).json({
-          error: `Not enough stock for ${p.product_name}`,
+      const requiredQty =
+        Number(p.quantity || 0);
+
+      // only tracking
+      if (
+        !stock ||
+        availableQty < requiredQty
+      ) {
+
+        lowStockItems.push({
+          item: p.product_name,
+          required_qty: requiredQty,
+          available_qty: availableQty,
+          shortage_qty:
+            requiredQty - availableQty,
         });
+
       }
     }
 
+    // =====================================
+    // QUOTATION NUMBER
+    // =====================================
+
     const last = await Quotation.findOne({
       where: { branch_id },
+
       order: [["created_at", "DESC"]],
+
       transaction: t,
+
       lock: t.LOCK.UPDATE,
     });
 
     let next = 1;
 
     if (last?.quotation_no) {
-      const parts = String(last.quotation_no).split("-");
-      const parsed = Number(parts[2]);
+
+      const parts =
+        String(last.quotation_no).split("-");
+
+      const parsed =
+        Number(parts[2]);
+
       if (!isNaN(parsed)) {
         next = parsed + 1;
       }
     }
 
-    const quotation_no = `QT-${branch_id}-${String(next).padStart(4, "0")}`;
+    const quotation_no =
+      `QT-${branch_id}-${String(next).padStart(4, "0")}`;
+
+    // =====================================
+    // TOTALS
+    // =====================================
 
     let subtotal = 0;
+
     for (const p of products) {
-      subtotal += Number(p.quantity || 0) * Number(p.unit_price || 0);
+
+      subtotal +=
+        Number(p.quantity || 0) *
+        Number(p.unit_price || 0);
+
     }
 
-    const gst_amount = (subtotal * Number(gst_percent || 0)) / 100;
-    const grand_total = subtotal + gst_amount;
+    const gst_amount =
+      (subtotal * Number(gst_percent || 0)) / 100;
 
-    const quotation = await Quotation.create(
-      {
-        quotation_no,
-        client_id: clientData.id,
-        branch_id,
-        total_amount: grand_total,
-        gst_amount,
-        valid_till: valid_till || null,
-        status: "pending",
-      },
-      { transaction: t }
-    );
+    const grand_total =
+      subtotal + gst_amount;
+
+    // =====================================
+    // CREATE QUOTATION
+    // =====================================
+
+    const quotation =
+      await Quotation.create(
+        {
+          quotation_no,
+
+          client_id:
+            clientData.id,
+
+          branch_id,
+
+          total_amount:
+            grand_total,
+
+          gst_amount,
+
+          valid_till:
+            valid_till || null,
+
+          status:
+            "pending",
+        },
+
+        {
+          transaction: t,
+        }
+      );
+
+    // =====================================
+    // CREATE ITEMS
+    // =====================================
 
     for (const p of products) {
-      const itemTotal = Number(p.quantity || 0) * Number(p.unit_price || 0);
-      const cgst = (itemTotal * Number(gst_percent || 0)) / 200;
-      const sgst = (itemTotal * Number(gst_percent || 0)) / 200;
+
+      const itemTotal =
+        Number(p.quantity || 0) *
+        Number(p.unit_price || 0);
+
+      const cgst =
+        (itemTotal *
+          Number(gst_percent || 0)) / 200;
+
+      const sgst =
+        (itemTotal *
+          Number(gst_percent || 0)) / 200;
 
       await QuotationItem.create(
         {
-          quotation_id: quotation.id,
-          product_name: p.product_name,
-          quantity: p.quantity,
-          unit_price: p.unit_price,
-          unit: p.unit || "",
-          hsn: p.hsn || "",
-          specifications: p.specifications || "",
+          quotation_id:
+            quotation.id,
+
+          product_name:
+            p.product_name,
+
+          quantity:
+            p.quantity,
+
+          unit_price:
+            p.unit_price,
+
+          unit:
+            p.unit || "",
+
+          hsn:
+            p.hsn || "",
+
+          specifications:
+            p.specifications || "",
+
           cgst,
+
           sgst,
-          subtotal: itemTotal,
-          amount: itemTotal + cgst + sgst,
+
+          subtotal:
+            itemTotal,
+
+          amount:
+            itemTotal + cgst + sgst,
         },
-        { transaction: t }
+
+        {
+          transaction: t,
+        }
       );
     }
 
+    // =====================================
+    // COMMIT
+    // =====================================
+
     await t.commit();
 
-    const branch = await Branch.findByPk(branch_id);
+    // =====================================
+    // LOW STOCK LOG
+    // =====================================
 
-    const items = await QuotationItem.findAll({
-      where: { quotation_id: quotation.id },
-      order: [["id", "ASC"]],
-    });
+    if (lowStockItems.length > 0) {
 
-    const doc = new PDFDocument({ margin: 30 });
+      console.log(
+        "LOW STOCK ITEMS:",
+        lowStockItems
+      );
 
-    // ✅ view / download support
-    const type = String(req.query.type || "download").toLowerCase();
-    const disposition = type === "view" ? "inline" : "attachment";
+    }
 
-    res.setHeader("Content-Type", "application/pdf");
+    // =====================================
+    // PDF
+    // =====================================
+
+    const branch =
+      await Branch.findByPk(branch_id);
+
+    const items =
+      await QuotationItem.findAll({
+        where: {
+          quotation_id:
+            quotation.id,
+        },
+
+        order: [["id", "ASC"]],
+      });
+
+    const doc =
+      new PDFDocument({
+        margin: 30,
+      });
+
+    // =====================================
+    // VIEW / DOWNLOAD
+    // =====================================
+
+    const type =
+      String(
+        req.query.type || "download"
+      ).toLowerCase();
+
+    const disposition =
+      type === "view"
+        ? "inline"
+        : "attachment";
+
+    res.setHeader(
+      "Content-Type",
+      "application/pdf"
+    );
+
     res.setHeader(
       "Content-Disposition",
       `${disposition}; filename=${quotation_no}.pdf`
@@ -458,79 +622,244 @@ exports.createQuotation = async (req, res) => {
 
     doc.pipe(res);
 
+    // =====================================
     // HEADER
-    doc.fontSize(16).text(branch?.name || "", { align: "center" });
-    doc.fontSize(10).text(branch?.address || "", { align: "center" });
-    doc.text(`GST: ${branch?.gst || ""}`, { align: "center" });
+    // =====================================
+
+    doc
+      .fontSize(16)
+      .text(
+        branch?.name || "",
+        {
+          align: "center",
+        }
+      );
+
+    doc
+      .fontSize(10)
+      .text(
+        branch?.address || "",
+        {
+          align: "center",
+        }
+      );
+
+    doc.text(
+      `GST: ${branch?.gst || ""}`,
+      {
+        align: "center",
+      }
+    );
+
     doc.moveDown();
 
-    doc.fontSize(14).text("QUOTATION", { align: "center" });
+    doc
+      .fontSize(14)
+      .text(
+        "QUOTATION",
+        {
+          align: "center",
+        }
+      );
+
     doc.moveDown();
 
+    // =====================================
     // DETAILS
+    // =====================================
+
     doc.fontSize(10);
-    doc.text(`Quotation No: ${quotation.quotation_no}`);
-    doc.text(`Date: ${new Date(quotation.created_at).toDateString()}`);
-    doc.text(`Status: ${quotation.status}`);
+
+    doc.text(
+      `Quotation No: ${quotation.quotation_no}`
+    );
+
+    doc.text(
+      `Date: ${new Date(
+        quotation.created_at
+      ).toDateString()}`
+    );
+
+    doc.text(
+      `Status: ${quotation.status}`
+    );
+
     if (quotation.valid_till) {
-      doc.text(`Valid Till: ${new Date(quotation.valid_till).toDateString()}`);
+
+      doc.text(
+        `Valid Till: ${new Date(
+          quotation.valid_till
+        ).toDateString()}`
+      );
+
     }
+
     doc.moveDown();
 
     doc.text("Billing To:");
-    doc.text(`${clientData.name || ""}`);
-    doc.text(`${clientData.address || ""}`);
-    if (clientData.phone) doc.text(`Phone: ${clientData.phone}`);
-    if (clientData.email) doc.text(`Email: ${clientData.email}`);
+
+    doc.text(
+      `${clientData.name || ""}`
+    );
+
+    doc.text(
+      `${clientData.address || ""}`
+    );
+
+    if (clientData.phone) {
+
+      doc.text(
+        `Phone: ${clientData.phone}`
+      );
+
+    }
+
+    if (clientData.email) {
+
+      doc.text(
+        `Email: ${clientData.email}`
+      );
+
+    }
+
     doc.moveDown();
 
+    // =====================================
     // TABLE HEADER
+    // =====================================
+
     doc.font("Helvetica-Bold");
+
     let y = doc.y;
+
     doc.text("No", 30, y);
+
     doc.text("Item", 60, y);
+
     doc.text("Qty", 260, y);
+
     doc.text("Rate", 320, y);
+
     doc.text("Total", 420, y);
+
     doc.moveDown();
+
     doc.font("Helvetica");
 
+    // =====================================
     // ITEMS
+    // =====================================
+
     items.forEach((it, i) => {
+
       const rowY = doc.y;
-      doc.text(String(i + 1), 30, rowY);
-      doc.text(String(it.product_name || ""), 60, rowY, { width: 180 });
-      doc.text(String(it.quantity || 0), 260, rowY);
-      doc.text(String(it.unit_price || 0), 320, rowY);
-      doc.text(String(it.amount || 0), 420, rowY);
+
+      doc.text(
+        String(i + 1),
+        30,
+        rowY
+      );
+
+      doc.text(
+        String(it.product_name || ""),
+        60,
+        rowY,
+        {
+          width: 180,
+        }
+      );
+
+      doc.text(
+        String(it.quantity || 0),
+        260,
+        rowY
+      );
+
+      doc.text(
+        String(it.unit_price || 0),
+        320,
+        rowY
+      );
+
+      doc.text(
+        String(it.amount || 0),
+        420,
+        rowY
+      );
+
       doc.moveDown();
     });
 
     doc.moveDown(2);
 
+    // =====================================
     // TOTALS
+    // =====================================
+
     doc.font("Helvetica-Bold");
-    doc.text(`Subtotal: ${subtotal}`, { align: "right" });
-    doc.text(`GST: ${gst_amount}`, { align: "right" });
-    doc.text(`Grand Total: ${grand_total}`, { align: "right" });
+
+    doc.text(
+      `Subtotal: ${subtotal}`,
+      {
+        align: "right",
+      }
+    );
+
+    doc.text(
+      `GST: ${gst_amount}`,
+      {
+        align: "right",
+      }
+    );
+
+    doc.text(
+      `Grand Total: ${grand_total}`,
+      {
+        align: "right",
+      }
+    );
+
     doc.font("Helvetica");
 
     doc.moveDown(2);
-    doc.text("Thank you!", { align: "center" });
+
+    doc.text(
+      "Thank you!",
+      {
+        align: "center",
+      }
+    );
 
     doc.end();
+
   } catch (err) {
+
     try {
-      if (!t.finished) await t.rollback();
+
+      if (!t.finished) {
+        await t.rollback();
+      }
+
     } catch (rollbackErr) {
-      console.error("Rollback failed:", rollbackErr);
+
+      console.error(
+        "Rollback failed:",
+        rollbackErr
+      );
+
     }
 
-    console.error("createQuotation error:", err);
+    console.error(
+      "createQuotation error:",
+      err
+    );
 
     return res.status(500).json({
-      message: "Something went wrong!",
-      error: err.message,
+      message:
+        "Something went wrong!",
+
+      error:
+        err.message,
     });
   }
 };
