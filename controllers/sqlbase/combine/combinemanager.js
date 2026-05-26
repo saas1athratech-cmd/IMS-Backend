@@ -3914,10 +3914,6 @@ exports.getBranchDetailsDashboard = async (req, res) => {
 exports.getItemFullDetails = async (req, res) => {
   try {
 
-    // =====================================================
-    // USER + ROLE VALIDATION
-    // =====================================================
-
     const user = req.user;
 
     const SUPER_ROLES = [
@@ -3928,8 +3924,7 @@ exports.getItemFullDetails = async (req, res) => {
       "super_sales_manager"
     ];
 
-    const role =
-      user?.role?.toLowerCase()?.trim();
+    const role = user?.role?.toLowerCase()?.trim();
 
     if (!role) {
       return res.status(403).json({
@@ -3938,26 +3933,14 @@ exports.getItemFullDetails = async (req, res) => {
       });
     }
 
-    const isSuperUser =
-      SUPER_ROLES.includes(role);
+    const isSuperUser = SUPER_ROLES.includes(role);
 
-    // =====================================================
-    // PARAMS
-    // =====================================================
+    const { branchId, itemName } = req.params;
 
-    const { branchId, itemName } =
-      req.params;
+    const requestedBranchId = Number(branchId);
+    const itemKey = String(itemName || "").trim();
 
-    const requestedBranchId =
-      Number(branchId);
-
-    const itemKey =
-      String(itemName || "").trim();
-
-    if (
-      !requestedBranchId ||
-      isNaN(requestedBranchId)
-    ) {
+    if (!requestedBranchId || isNaN(requestedBranchId)) {
       return res.status(400).json({
         success: false,
         message: "Valid branchId is required"
@@ -3971,53 +3954,39 @@ exports.getItemFullDetails = async (req, res) => {
       });
     }
 
-    // =====================================================
-    // BRANCH ACCESS CHECK
-    // =====================================================
+    const userBranches = (user?.branches || []).map(Number);
 
-    const userBranches =
-      (user?.branches || [])
-      .map(Number);
-
-    if (
-      !isSuperUser &&
-      !userBranches.includes(
-        requestedBranchId
-      )
-    ) {
+    if (!isSuperUser && !userBranches.includes(requestedBranchId)) {
       return res.status(403).json({
         success: false,
-        message:
-          "Access denied for this branch"
+        message: "Access denied for this branch"
       });
     }
 
-    // =====================================================
-    // FIND STOCK ITEM
-    // =====================================================
+    // ==============================
+    // 1. GET STOCK (MASTER DATA)
+    // ==============================
 
-    const stockResult =
-      await sequelize.query(
-        `
-        SELECT 
-          s.*
-        FROM stocks s
-        WHERE s.branch_id = :branchId
-        AND (
-          CAST(s.id AS TEXT) = :itemKey
-          OR LOWER(TRIM(s.item)) = LOWER(TRIM(:itemKey))
-          OR LOWER(TRIM(s.sku)) = LOWER(TRIM(:itemKey))
-        )
-        LIMIT 1
-        `,
-        {
-          replacements: {
-            branchId: requestedBranchId,
-            itemKey
-          },
-          type: QueryTypes.SELECT
-        }
-      );
+    const stockResult = await sequelize.query(
+      `
+      SELECT *
+      FROM stocks
+      WHERE branch_id = :branchId
+      AND (
+        CAST(id AS TEXT) = :itemKey
+        OR LOWER(TRIM(item)) = LOWER(TRIM(:itemKey))
+        OR LOWER(TRIM(sku)) = LOWER(TRIM(:itemKey))
+      )
+      LIMIT 1
+      `,
+      {
+        replacements: {
+          branchId: requestedBranchId,
+          itemKey
+        },
+        type: QueryTypes.SELECT
+      }
+    );
 
     if (!stockResult.length) {
       return res.status(404).json({
@@ -4026,383 +3995,146 @@ exports.getItemFullDetails = async (req, res) => {
       });
     }
 
-    const stock =
-      stockResult[0];
+    const stock = stockResult[0];
+    const stockId = stock.id;
 
-    const stockId =
-      Number(stock.id);
+    // ==============================
+    // 2. STOCK MOVEMENTS ANALYTICS
+    // ==============================
 
-    // =====================================================
-    // MAIN STATS
-    // =====================================================
+    const movementStats = await sequelize.query(
+      `
+      SELECT 
+        COALESCE(SUM(CASE WHEN type='IN' THEN quantity ELSE 0 END),0) AS stock_in,
+        COALESCE(SUM(CASE WHEN type='OUT' THEN quantity ELSE 0 END),0) AS stock_out,
+        COUNT(*) AS total_movements
+      FROM stock_movements
+      WHERE stock_id = :stockId
+      `,
+      {
+        replacements: { stockId },
+        type: QueryTypes.SELECT
+      }
+    );
 
-    const statsResult =
-      await sequelize.query(
-        `
-        SELECT 
+    const stats = movementStats[0];
 
-          COALESCE(s.quantity, 0)
-          AS "totalStock",
+    // ==============================
+    // 3. RECEIVE DATE (FIRST IN)
+    // ==============================
 
-          COALESCE(s.rate, 0)
-          AS "rate",
+    const receiveDateResult = await sequelize.query(
+      `
+      SELECT MIN(created_at) AS received_date
+      FROM stock_movements
+      WHERE stock_id = :stockId
+      AND type = 'IN'
+      `,
+      {
+        replacements: { stockId },
+        type: QueryTypes.SELECT
+      }
+    );
 
-          COALESCE(s.value, 0)
-          AS "totalValue",
+    const receivedDate =
+      receiveDateResult[0]?.received_date ||
+      stock.created_at;
 
-          COALESCE(s.bundle_size, '0')
-          AS "bundleSize",
+    // ==============================
+    // 4. SUMMARY CALCULATIONS
+    // ==============================
 
-          COALESCE(s.min_stock_level, 0)
-          AS "minStockLevel",
+    const currentStock =
+      Number(stock.quantity);
 
-          COALESCE(
-            (
-              SELECT SUM(sm.quantity)
-              FROM stock_movements sm
-              WHERE sm.stock_id = s.id
-              AND sm.type = 'IN'
-            ),
-            0
-          ) AS "stockIn",
+    const consumed = Number(stats.stock_out);
 
-          COALESCE(
-            (
-              SELECT SUM(sm.quantity)
-              FROM stock_movements sm
-              WHERE sm.stock_id = s.id
-              AND sm.type = 'OUT'
-            ),
-            0
-          ) AS "stockOut",
+    const received = Number(stats.stock_in);
 
-          COALESCE(
-            (
-              SELECT COUNT(sm.id)
-              FROM stock_movements sm
-              WHERE sm.stock_id = s.id
-            ),
-            0
-          ) AS "totalMovements"
-
-        FROM stocks s
-
-        WHERE s.id = :stockId
-        LIMIT 1
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    const stats =
-      statsResult[0];
-
-    // =====================================================
-    // AGING ANALYTICS
-    // =====================================================
-
-    const agingChart =
-      await sequelize.query(
-        `
-        SELECT 
-          COALESCE(aging,0) AS aging,
-          COALESCE(quantity,0) AS qty
-        FROM stocks
-        WHERE id = :stockId
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    // =====================================================
-    // STATUS ANALYTICS
-    // =====================================================
-
-    const statusChart =
-      await sequelize.query(
-        `
-        SELECT 
-          COALESCE(status::text,'GOOD')
-          AS status,
-
-          COALESCE(quantity,0)
-          AS qty
-
-        FROM stocks
-
-        WHERE id = :stockId
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    // =====================================================
-    // MONTHLY TREND
-    // =====================================================
-
-    const monthlyTrend =
-      await sequelize.query(
-        `
-        SELECT 
-
-          TO_CHAR(
-            created_at,
-            'YYYY-MM'
-          ) AS month,
-
-          COALESCE(quantity,0)
-          AS qty,
-
-          COALESCE(value,0)
-          AS value
-
-        FROM stocks
-
-        WHERE id = :stockId
-
-        ORDER BY created_at ASC
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    // =====================================================
-    // MOVEMENT HISTORY
-    // =====================================================
-
-    const movementHistory =
-      await sequelize.query(
-        `
-        SELECT 
-
-          sm.id,
-
-          sm.type,
-
-          sm.quantity,
-
-          COALESCE(
-            sm.bundle_quantity,
-            0
-          ) AS bundle_quantity,
-
-          sm.created_at
-
-        FROM stock_movements sm
-
-        WHERE sm.stock_id = :stockId
-
-        ORDER BY sm.created_at DESC
-
-        LIMIT 20
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    // =====================================================
-    // BATCH DATA
-    // =====================================================
-
-    const batchData =
-      await sequelize.query(
-        `
-        SELECT 
-
-          COALESCE(batch_no,'N/A')
-          AS batch_no,
-
-          COALESCE(grn,'N/A')
-          AS grn,
-
-          COALESCE(po_number,'N/A')
-          AS po_number,
-
-          COALESCE(quantity,0)
-          AS qty,
-
-          COALESCE(value,0)
-          AS value
-
-        FROM stocks
-
-        WHERE id = :stockId
-        `,
-        {
-          replacements: {
-            stockId
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-    // =====================================================
-    // LOW STOCK CHECK
-    // =====================================================
+    const totalValue =
+      currentStock * Number(stock.rate || 0);
 
     const lowStock =
-      Number(stats.totalStock) <=
-      Number(stats.minStockLevel);
+      currentStock <= Number(stock.min_stock_level || 0);
 
-    // =====================================================
-    // RESPONSE
-    // =====================================================
+    // ==============================
+    // 5. TOTAL BATCHES (FIXED)
+    // ==============================
+
+    const totalBatchesResult = await sequelize.query(
+      `
+      SELECT COUNT(DISTINCT batch_no) AS total_batches
+      FROM stocks
+      WHERE item = :item
+      AND branch_id = :branchId
+      AND batch_no IS NOT NULL
+      `,
+      {
+        replacements: {
+          item: stock.item,
+          branchId: requestedBranchId
+        },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    const totalBatches =
+      Number(totalBatchesResult[0]?.total_batches || 0);
+
+    // ==============================
+    // 6. "BATCH VIEW" (SIMULATED)
+    // ==============================
+
+    const batchView = [
+      {
+        batchNo: stock.batch_no || "N/A",
+        unitPrice: stock.rate,
+        manufacturingDate: stock.created_at,
+        receivedDate: receivedDate,
+        totalQty: currentStock,
+        totalValue: totalValue,
+        consumedQty: consumed,
+        availableQty: currentStock,
+        supplier: "N/A",
+        branchId: stock.branch_id
+      }
+    ];
+
+    // ==============================
+    // 7. RESPONSE (UI READY)
+    // ==============================
 
     return res.status(200).json({
-
       success: true,
-
-      message:
-        "Item full details fetched successfully",
+      message: "Item full details fetched successfully",
 
       data: {
 
-        stock: {
-
-          id: stock.id,
-
-          item: stock.item,
-
-          sku: stock.sku,
-
-          category: stock.category,
-
-          sub_category:
-            stock.sub_category,
-
-          brand: stock.brand,
-
-          model_no:
-            stock.model_no,
-
-          serial_no:
-            stock.serial_no,
-
-          unit: stock.unit,
-
-          hsn: stock.hsn,
-
-          gst_percent:
-            stock.gst_percent,
-
-          batch_no:
-            stock.batch_no,
-
-          grn: stock.grn,
-
-          po_number:
-            stock.po_number,
-
-          rack_no:
-            stock.rack_no,
-
-          location:
-            stock.location,
-
-          specification:
-            stock.specification,
-
-          item_description:
-            stock.item_description,
-
-          status:
-            stock.status,
-
-          aging:
-            stock.aging,
-
-          created_at:
-            stock.created_at
-        },
-
-        analytics: {
-
-          totalStock:
-            Number(stats.totalStock),
-
-          totalValue:
-            Number(stats.totalValue),
-
-          stockRate:
-            Number(stats.rate),
-
-          stockIn:
-            Number(stats.stockIn),
-
-          stockOut:
-            Number(stats.stockOut),
-
-          currentBalance:
-            Number(stats.stockIn) -
-            Number(stats.stockOut),
-
-          totalMovements:
-            Number(stats.totalMovements),
-
-          bundleSize:
-            stats.bundleSize,
-
+        summary: {
+          currentStock,
+          totalConsumed: consumed,
+          totalReceived: received,
+          totalValue,
           lowStock,
+          totalMovements: Number(stats.total_movements),
 
-          minStockLevel:
-            Number(
-              stats.minStockLevel
-            )
-
+          // NEW
+          totalBatches
         },
 
-        charts: {
+        stock: stock,
 
-          agingChart,
-
-          statusChart,
-
-          monthlyTrend
-
-        },
-
-        movementHistory,
-
-        batches: batchData
-
+        batches: batchView
       }
-
     });
 
   } catch (err) {
-
-    console.error(
-      "GET ITEM FULL DETAILS ERROR:",
-      err
-    );
+    console.error("GET ITEM FULL DETAILS ERROR:", err);
 
     return res.status(500).json({
       success: false,
-      message:
-        err.message ||
-        "Internal server error"
+      message: err.message || "Internal server error"
     });
-
   }
 };
 exports.getCityBranchDashboard = async (req, res) => {
