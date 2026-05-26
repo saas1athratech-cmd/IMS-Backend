@@ -6,7 +6,7 @@ const StockMovement = require("../../../model/SQL_Model/stockmovement");
 const { Branch, Ledger} = require("../../../model/SQL_Model");
 const { ClientLedger, Client } = require("../../../model/SQL_Model");
 const { InventoryBatch } = require("../../../model/SQL_Model");
-
+const createBatch = require("../../../service.sql/helpers/createBatch");
 // const Stock = require("../../../model/SQL_Model/stock.record");
 // ============================
 // INVENTORY DASHBOARD
