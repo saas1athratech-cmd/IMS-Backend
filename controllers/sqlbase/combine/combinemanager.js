@@ -956,138 +956,215 @@ exports.bulkUploadStock = async (req, res) => {
   try {
     let data = [];
 
-    // ✅ Excel / CSV Upload
+    // =========================
+    // FILE PARSE
+    // =========================
     if (req.file) {
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
     }
 
-    // ✅ JSON Upload
     if (req.body.data) {
-      data = typeof req.body.data === "string"
-        ? JSON.parse(req.body.data)
-        : req.body.data;
+      data =
+        typeof req.body.data === "string"
+          ? JSON.parse(req.body.data)
+          : req.body.data;
     }
 
     if (!data || data.length === 0) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: "No data found in file"
+        message: "No data found in file",
       });
     }
 
-    const formattedData = data
-      .map((row) => {
-        const item =
-          row.item ||
-          row.Item ||
-          row["Item Name"] ||
-          row["item name"];
+    let created = [];
+    let updated = [];
 
-        const category =
-          row.category ||
-          row.Category ||
-          row.Categories ||
-          row["Categories"] ||
-          null;
+    // =========================
+    // LOOP ROWS
+    // =========================
+    for (const row of data) {
+      const item =
+        row.item || row.Item || row["Item Name"] || row["item name"];
 
-        const hsn =
-          row.hsn ||
-          row.HSN ||
-          row["HSN Code"] ||
-          row["hsn code"] ||
-          null;
+      const quantity = Number(
+        row.quantity || row.Quantity || row["Stock IN"] || 0
+      );
 
-        const grn =
-          row.grn ||
-          row.GRN ||
-          row["GRN No."] ||
-          row["GRN No"] ||
-          null;
+      const rate = Number(row.rate || row.Rate || 0);
 
-        const po_number =
-          row.po_number ||
-          row.purchaseOrder ||
-          row["Purchase Order No."] ||
-          row["Purchase Order No"] ||
-          "N/A";
+      if (!item || quantity <= 0 || isNaN(rate)) continue;
 
-        const quantity = Number(
-          row.quantity ||
-          row.Quantity ||
-          row["Current Stock"] ||
-          row["Stock IN"] ||
-          0
-        );
+      const category = row.category || row.Category || null;
+      const hsn = row.hsn || row.HSN || null;
+      const grn = row.grn || row.GRN || null;
+      const po_number = row.po_number || row["Purchase Order No."] || "N/A";
 
-        const rate = Number(
-          row.rate ||
-          row.Rate ||
-          row["Purchase Rate"] ||
-          0
-        );
+      const sku = row.sku || null;
+      const sub_category = row.sub_category || null;
+      const brand = row.brand || null;
+      const type = row.type || null;
+      const size = row.size || null;
+      const color = row.color || null;
+      const bundle_size = Number(row.bundle_size || 1);
 
-        if (!item || isNaN(quantity) || quantity <= 0 || isNaN(rate)) {
-          return null;
-        }
+      const model_no = row.model_no || null;
+      const serial_no = row.serial_no || null;
 
-        return {
-          item: String(item).trim(),
-          category,
-          hsn,
-          grn,
-          po_number,
-          quantity,
-          rate,
-          value: quantity * rate,
+      const item_description =
+        row.item_description ||
+        `${brand || ""} ${type || ""} ${item || ""} ${size || ""} ${color || ""}`
+          .replace(/\s+/g, " ")
+          .trim();
 
-          // ✅ DB default GOOD bhi chalega, but safe rakha hai
-          status: "GOOD",
+      const finalValue = quantity * rate;
 
+      // =========================
+      // FIND EXISTING STOCK
+      // =========================
+      const existingStock = await Stock.findOne({
+        where: {
+          item,
           branch_id: req.user.branch_id,
-          owner_id: req.user.id
-        };
-      })
-      .filter(Boolean);
-
-    if (formattedData.length === 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "All rows are invalid. Check your Excel/CSV format."
+          size: size || null,
+          type: type || null,
+        },
+        transaction,
       });
+
+      // =====================================================
+      // UPDATE FLOW
+      // =====================================================
+      if (existingStock) {
+        existingStock.quantity =
+          Number(existingStock.quantity) + quantity;
+
+        existingStock.rate = rate || existingStock.rate;
+
+        existingStock.value =
+          Number(existingStock.quantity) *
+          Number(existingStock.rate);
+
+        existingStock.category = category || existingStock.category;
+        existingStock.hsn = hsn || existingStock.hsn;
+        existingStock.grn = grn || existingStock.grn;
+        existingStock.po_number =
+          po_number || existingStock.po_number;
+
+        existingStock.brand = brand || existingStock.brand;
+        existingStock.color = color || existingStock.color;
+        existingStock.bundle_size =
+          bundle_size || existingStock.bundle_size;
+
+        existingStock.item_description =
+          existingStock.item_description || item_description;
+
+        await existingStock.save({ transaction });
+
+        await StockMovement.create(
+          {
+            stock_id: existingStock.id,
+            branch_id: req.user.branch_id,
+            type: "IN",
+            quantity,
+            note: "Bulk upload update",
+          },
+          { transaction }
+        );
+
+        updated.push(existingStock);
+      }
+
+      // =====================================================
+      // CREATE FLOW
+      // =====================================================
+      else {
+        const newStock = await Stock.create(
+          {
+            item,
+            category,
+            quantity,
+            rate,
+            value: finalValue,
+            hsn,
+            grn,
+            po_number,
+
+            sku,
+            sub_category,
+            brand,
+            type,
+            size,
+            color,
+            bundle_size,
+
+            model_no,
+            serial_no,
+
+            item_description,
+
+            status: "GOOD",
+
+            owner_id: req.user.id,
+            branch_id: req.user.branch_id,
+          },
+          { transaction }
+        );
+
+        await StockMovement.create(
+          {
+            stock_id: newStock.id,
+            branch_id: req.user.branch_id,
+            type: "IN",
+            quantity,
+            note: "Bulk upload",
+          },
+          { transaction }
+        );
+
+        const year = new Date().getFullYear();
+        const lastBatch = await InventoryBatch.findOne({
+          order: [["id", "DESC"]],
+          transaction,
+        });
+
+        const nextId = lastBatch ? lastBatch.id + 1 : 1;
+
+        const autoBatchNo = `BAT-${year}-${String(nextId).padStart(
+          5,
+          "0"
+        )}`;
+
+        await createBatch({
+          batch_no: autoBatchNo,
+          stock_id: newStock.id,
+          parent_batch_id: null,
+          branch_id: req.user.branch_id,
+          total_bundle: quantity,
+          available_bundle: quantity,
+          bundle_size,
+          item_name: item,
+          status: "ACTIVE",
+          transaction,
+        });
+
+        created.push(newStock);
+      }
     }
-
-    // ✅ Stock Insert
-    const insertedStocks = await Stock.bulkCreate(formattedData, {
-      transaction,
-      returning: true
-    });
-
-    // ✅ StockMovement Insert
-    const stockMovements = insertedStocks.map((stock) => ({
-      stock_id: stock.id,
-      branch_id: stock.branch_id,
-      type: "IN",
-      quantity: stock.quantity,
-      note: "Bulk stock upload"
-    }));
-
-    await StockMovement.bulkCreate(stockMovements, {
-      transaction
-    });
 
     await transaction.commit();
 
     return res.status(201).json({
       success: true,
-      message: "Stock uploaded successfully",
-      count: insertedStocks.length,
-      data: insertedStocks
+      message: "Bulk stock processed successfully",
+      createdCount: created.length,
+      updatedCount: updated.length,
+      created,
+      updated,
     });
-
   } catch (err) {
     if (transaction && !transaction.finished) {
       await transaction.rollback();
@@ -1097,8 +1174,7 @@ exports.bulkUploadStock = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Bulk upload failed",
-      error: err.message
+      message: err.message,
     });
   }
 };
