@@ -16,7 +16,7 @@ const {
   getStockAgingDashboard,
   getReportsAnalyticsDashboard,
   getCompleteDashboard,
-  addStockItem,addNewBatchToExistingItem
+  addStockItem,addNewBatchToExistingItem,
 
   getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock,exportInventoryCSV
 } = require("../../controllers/sqlbase/combine/combinemanager");
