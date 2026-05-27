@@ -3988,6 +3988,7 @@ exports.getBranchDetailsDashboard = async (req, res) => {
 // INTERNAL LOGIC UPDATED
 // ==========================================
 exports.getItemFullDetails = async (req, res) => {
+
   try {
 
     const user = req.user;
@@ -4000,217 +4001,614 @@ exports.getItemFullDetails = async (req, res) => {
       "super_sales_manager"
     ];
 
-    const role = user?.role?.toLowerCase()?.trim();
+    const role =
+      user?.role
+        ?.toLowerCase()
+        ?.trim();
 
     if (!role) {
+
       return res.status(403).json({
         success: false,
         message: "Invalid user role"
       });
+
     }
 
-    const isSuperUser = SUPER_ROLES.includes(role);
+    const isSuperUser =
+      SUPER_ROLES.includes(role);
 
-    const { branchId, itemName } = req.params;
+    const {
+      branchId,
+      itemName
+    } = req.params;
 
-    const requestedBranchId = Number(branchId);
-    const itemKey = String(itemName || "").trim();
+    // FILTER
+    const {
+      filter = "all"
+    } = req.query;
 
-    if (!requestedBranchId || isNaN(requestedBranchId)) {
+    const requestedBranchId =
+      Number(branchId);
+
+    const itemKey =
+      String(itemName || "").trim();
+
+    if (
+      !requestedBranchId ||
+      isNaN(requestedBranchId)
+    ) {
+
       return res.status(400).json({
         success: false,
-        message: "Valid branchId is required"
+        message:
+          "Valid branchId is required"
       });
+
     }
 
     if (!itemKey) {
+
       return res.status(400).json({
         success: false,
-        message: "itemName is required"
+        message:
+          "itemName is required"
       });
+
     }
 
-    const userBranches = (user?.branches || []).map(Number);
+    const userBranches =
+      (user?.branches || [])
+        .map(Number);
 
-    if (!isSuperUser && !userBranches.includes(requestedBranchId)) {
+    if (
+      !isSuperUser &&
+      !userBranches.includes(
+        requestedBranchId
+      )
+    ) {
+
       return res.status(403).json({
         success: false,
-        message: "Access denied for this branch"
+        message:
+          "Access denied for this branch"
       });
+
     }
 
     // ==============================
-    // 1. GET STOCK (MASTER DATA)
+    // 1. STOCK FETCH
     // ==============================
 
-    const stockResult = await sequelize.query(
-      `
-      SELECT *
-      FROM stocks
-      WHERE branch_id = :branchId
-      AND (
-        CAST(id AS TEXT) = :itemKey
-        OR LOWER(TRIM(item)) = LOWER(TRIM(:itemKey))
-        OR LOWER(TRIM(sku)) = LOWER(TRIM(:itemKey))
-      )
-      LIMIT 1
-      `,
-      {
-        replacements: {
-          branchId: requestedBranchId,
-          itemKey
-        },
-        type: QueryTypes.SELECT
-      }
-    );
+    const stockResult =
+      await sequelize.query(
+        `
+        SELECT *
+        FROM stocks
+        WHERE branch_id = :branchId
+        AND (
+          CAST(id AS TEXT) = :itemKey
+          OR LOWER(TRIM(item)) = LOWER(TRIM(:itemKey))
+          OR LOWER(TRIM(sku)) = LOWER(TRIM(:itemKey))
+        )
+        LIMIT 1
+        `,
+        {
+          replacements: {
+            branchId:
+              requestedBranchId,
+            itemKey
+          },
+
+          type:
+            QueryTypes.SELECT
+        }
+      );
 
     if (!stockResult.length) {
+
       return res.status(404).json({
         success: false,
-        message: "Stock item not found"
+        message:
+          "Stock item not found"
       });
+
     }
 
-    const stock = stockResult[0];
-    const stockId = stock.id;
+    const stock =
+      stockResult[0];
+
+    const stockId =
+      stock.id;
 
     // ==============================
-    // 2. STOCK MOVEMENTS ANALYTICS
+    // 2. STOCK MOVEMENTS
     // ==============================
 
-    const movementStats = await sequelize.query(
-      `
-      SELECT 
-        COALESCE(SUM(CASE WHEN type='IN' THEN quantity ELSE 0 END),0) AS stock_in,
-        COALESCE(SUM(CASE WHEN type='OUT' THEN quantity ELSE 0 END),0) AS stock_out,
-        COUNT(*) AS total_movements
-      FROM stock_movements
-      WHERE stock_id = :stockId
-      `,
-      {
-        replacements: { stockId },
-        type: QueryTypes.SELECT
-      }
-    );
+    const movementStats =
+      await sequelize.query(
+        `
+        SELECT
 
-    const stats = movementStats[0];
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type='IN'
+                THEN quantity
+                ELSE 0
+              END
+            ),0
+          ) AS stock_in,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type='OUT'
+                THEN quantity
+                ELSE 0
+              END
+            ),0
+          ) AS stock_out,
+
+          COUNT(*) AS total_movements
+
+        FROM stock_movements
+        WHERE stock_id = :stockId
+        `,
+        {
+          replacements: {
+            stockId
+          },
+
+          type:
+            QueryTypes.SELECT
+        }
+      );
+
+    const stats =
+      movementStats[0];
 
     // ==============================
-    // 3. RECEIVE DATE (FIRST IN)
+    // 3. RECEIVE DATE
     // ==============================
 
-    const receiveDateResult = await sequelize.query(
-      `
-      SELECT MIN(created_at) AS received_date
-      FROM stock_movements
-      WHERE stock_id = :stockId
-      AND type = 'IN'
-      `,
-      {
-        replacements: { stockId },
-        type: QueryTypes.SELECT
-      }
-    );
+    const receiveDateResult =
+      await sequelize.query(
+        `
+        SELECT MIN(created_at) AS received_date
+        FROM stock_movements
+        WHERE stock_id = :stockId
+        AND type = 'IN'
+        `,
+        {
+          replacements: {
+            stockId
+          },
+
+          type:
+            QueryTypes.SELECT
+        }
+      );
 
     const receivedDate =
-      receiveDateResult[0]?.received_date ||
+      receiveDateResult[0]
+        ?.received_date ||
       stock.created_at;
 
     // ==============================
-    // 4. SUMMARY CALCULATIONS
+    // 4. BATCHES
+    // ==============================
+ // ==============================
+ // 4. BATCHES
+ // ==============================
+
+ let batches = [];
+
+ try {
+
+   batches =
+     await sequelize.query(
+       `
+       SELECT
+
+         ib.id,
+
+         ib.batch_no AS "batchNo",
+
+         ib.stock_id AS "stockId",
+
+         ib.parent_batch_id AS "parentBatchId",
+
+         ib.branch_id AS "branchId",
+
+         ib.total_bundle AS "totalQty",
+
+         ib.available_bundle AS "availableQty",
+
+         (
+           ib.total_bundle -
+           ib.available_bundle
+         ) AS "consumedQty",
+
+         ib.bundle_size AS "bundleSize",
+
+         ib.item_name AS "itemName",
+
+         ib.status,
+
+         ib.created_at AS "receivedDate",
+
+         ib.created_at AS "manufacturingDate",
+
+         ib.created_at AS "updatedAt",
+
+         s.rate AS "unitPrice",
+
+         s.expiry_date AS "expiryDate",
+
+         'N/A' AS "supplier"
+
+       FROM inventory_batches ib
+
+       LEFT JOIN stocks s
+       ON s.id = ib.stock_id
+
+       WHERE ib.stock_id = :stockId
+
+       ORDER BY ib.id DESC
+       `,
+       {
+         replacements: {
+           stockId
+         },
+
+         type:
+           QueryTypes.SELECT
+       }
+     );
+
+ } catch (e) {
+
+   console.error(
+     "BATCH FETCH ERROR:",
+     e
+   );
+
+   batches = [
+     {
+       id: null,
+
+       batchNo:
+         stock.batch_no || "N/A",
+
+       stockId:
+         stock.id,
+
+       parentBatchId:
+         null,
+
+       branchId:
+         stock.branch_id,
+
+       totalQty:
+         Number(stock.quantity),
+
+       availableQty:
+         Number(stock.quantity),
+
+       consumedQty:
+         Number(stats.stock_out),
+
+       bundleSize:
+         stock.bundle_size,
+
+       itemName:
+         stock.item,
+
+       status:
+         stock.status,
+
+       receivedDate:
+         stock.created_at,
+
+       manufacturingDate:
+         stock.created_at,
+
+       updatedAt:
+         stock.updated_at,
+
+       unitPrice:
+         stock.rate,
+
+       expiryDate:
+         stock.expiry_date || null,
+
+       supplier:
+         "N/A"
+     }
+   ];
+
+ }
+
+    // ==============================
+    // 5. FILTERS / TAGGING
+    // ==============================
+
+    const now =
+      new Date();
+
+    const processedBatches =
+      batches.map((batch) => {
+
+        let expiryStatus =
+          "FRESH";
+
+        let daysLeft =
+          null;
+
+        if (batch.expiryDate) {
+
+          const expiry =
+            new Date(
+              batch.expiryDate
+            );
+
+          daysLeft =
+            Math.ceil(
+              (
+                expiry - now
+              ) /
+              (
+                1000 *
+                60 *
+                60 *
+                24
+              )
+            );
+
+          if (
+            daysLeft <= 0
+          ) {
+
+            expiryStatus =
+              "EXPIRED";
+
+          }
+
+          else if (
+            daysLeft <= 30
+          ) {
+
+            expiryStatus =
+              "CRITICAL";
+
+          }
+
+          else if (
+            daysLeft <= 90
+          ) {
+
+            expiryStatus =
+              "NEAR_EXPIRY";
+
+          }
+
+        }
+
+        const recentlyUpdated =
+          batch.updatedAt
+            ? Math.floor(
+                (
+                  now -
+                  new Date(
+                    batch.updatedAt
+                  )
+                ) /
+                (
+                  1000 *
+                  60 *
+                  60
+                )
+              ) <= 24
+            : false;
+
+        return {
+
+          ...batch,
+
+          qty:
+            Number(
+              batch.availableQty || 0
+            ),
+
+          totalQty:
+            Number(
+              batch.totalQty || 0
+            ),
+
+          availableQty:
+            Number(
+              batch.availableQty || 0
+            ),
+
+          consumedQty:
+            Number(
+              batch.consumedQty || 0
+            ),
+
+          totalValue:
+            Number(
+              batch.availableQty || 0
+            ) *
+            Number(
+              batch.unitPrice || 0
+            ),
+
+          expiryStatus,
+
+          daysLeft,
+
+          recentlyUpdated,
+
+          updatedHoursAgo:
+            batch.updatedAt
+              ? Math.floor(
+                  (
+                    now -
+                    new Date(
+                      batch.updatedAt
+                    )
+                  ) /
+                  (
+                    1000 *
+                    60 *
+                    60
+                  )
+                )
+              : null
+        };
+
+      });
+
+    // ==============================
+    // 6. FILTER LOGIC
+    // ==============================
+
+    let filteredBatches =
+      processedBatches;
+
+    if (
+      filter === "critical"
+    ) {
+
+      filteredBatches =
+        processedBatches.filter(
+          b =>
+            (
+              b.expiryStatus ===
+                "CRITICAL" ||
+
+              b.expiryStatus ===
+                "NEAR_EXPIRY"
+            ) &&
+
+            Number(
+              b.availableQty
+            ) > 0
+        );
+
+    }
+
+    else if (
+      filter === "fresh"
+    ) {
+
+      filteredBatches =
+        processedBatches.filter(
+          b =>
+            b.expiryStatus ===
+            "FRESH"
+        );
+
+    }
+
+    else if (
+      filter === "recent"
+    ) {
+
+      filteredBatches =
+        processedBatches.filter(
+          b =>
+            b.recentlyUpdated
+        );
+
+    }
+
+    // ==============================
+    // 7. SUMMARY
     // ==============================
 
     const currentStock =
       Number(stock.quantity);
 
-    const consumed = Number(stats.stock_out);
+    const consumed =
+      Number(
+        stats.stock_out
+      );
 
-    const received = Number(stats.stock_in);
+    const received =
+      Number(
+        stats.stock_in
+      );
 
     const totalValue =
-      currentStock * Number(stock.rate || 0);
+      currentStock *
+      Number(
+        stock.rate || 0
+      );
 
     const lowStock =
-      currentStock <= Number(stock.min_stock_level || 0);
+      currentStock <=
+      Number(
+        stock.min_stock_level || 0
+      );
 
     // ==============================
-    // 5. TOTAL BATCHES (FIXED)
-    // ==============================
-
-    const totalBatchesResult = await sequelize.query(
-      `
-      SELECT COUNT(DISTINCT batch_no) AS total_batches
-      FROM stocks
-      WHERE item = :item
-      AND branch_id = :branchId
-      AND batch_no IS NOT NULL
-      `,
-      {
-        replacements: {
-          item: stock.item,
-          branchId: requestedBranchId
-        },
-        type: QueryTypes.SELECT
-      }
-    );
-
-    const totalBatches =
-      Number(totalBatchesResult[0]?.total_batches || 0);
-
-    // ==============================
-    // 6. "BATCH VIEW" (SIMULATED)
-    // ==============================
-
-    const batchView = [
-      {
-        batchNo: stock.batch_no || "N/A",
-        unitPrice: stock.rate,
-        manufacturingDate: stock.created_at,
-        receivedDate: receivedDate,
-        totalQty: currentStock,
-        totalValue: totalValue,
-        consumedQty: consumed,
-        availableQty: currentStock,
-        supplier: "N/A",
-        branchId: stock.branch_id
-      }
-    ];
-
-    // ==============================
-    // 7. RESPONSE (UI READY)
+    // 8. RESPONSE
     // ==============================
 
     return res.status(200).json({
       success: true,
-      message: "Item full details fetched successfully",
+
+      message:
+        "Item full details fetched successfully",
 
       data: {
 
         summary: {
-          currentStock,
-          totalConsumed: consumed,
-          totalReceived: received,
-          totalValue,
-          lowStock,
-          totalMovements: Number(stats.total_movements),
 
-          // NEW
-          totalBatches
+          currentStock,
+
+          totalConsumed:
+            consumed,
+
+          totalReceived:
+            received,
+
+          totalValue,
+
+          lowStock,
+
+          totalMovements:
+            Number(
+              stats.total_movements
+            ),
+
+          totalBatches:
+            processedBatches.length
         },
 
-        stock: stock,
+        stock,
 
-        batches: batchView
+        batches:
+          filteredBatches
       }
     });
 
   } catch (err) {
-    console.error("GET ITEM FULL DETAILS ERROR:", err);
+
+    console.error(
+      "GET ITEM FULL DETAILS ERROR:",
+      err
+    );
 
     return res.status(500).json({
       success: false,
-      message: err.message || "Internal server error"
+      message:
+        err.message ||
+        "Internal server error"
     });
+
   }
 };
 exports.getCityBranchDashboard = async (req, res) => {
