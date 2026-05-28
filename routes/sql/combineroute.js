@@ -16,7 +16,7 @@ const {
   getStockAgingDashboard,
   getReportsAnalyticsDashboard,
   getCompleteDashboard,
-  addStockItem,addNewBatchToExistingItem,
+  addStockItem,addNewBatchToExistingItem,getMyBranchInventory,
 
   getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock,exportInventoryCSV
 } = require("../../controllers/sqlbase/combine/combinemanager");
@@ -202,6 +202,22 @@ router.get('/ledger/client/:clientId',   auth,
     "admin",
     "super_sales_manager"
   ]), getClientLedgerByBranch);
+
+
+router.get(
+  "/my-branch-inventory",auth,
+  auth,checkRole([
+    "super_stock_manager",
+    "super_admin",
+    "super_sales_manager",
+    "inventory_manager",
+    "super_inventory_manager",
+    
+    "admin",
+    "sales_manager"
+  ]),
+  getMyBranchInventory
+);
 
 router.post(
   "/add-new-batch",
