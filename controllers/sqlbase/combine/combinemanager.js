@@ -5318,3 +5318,362 @@ exports.addNewBatchToExistingItem = async (req, res) => {
 
   }
 };
+
+
+
+exports.downloadAllBranchInventoryCSV = async (req, res) => {
+  try {
+    const user = req.user;
+
+    const role = user?.role || user?.role?.name;
+    const branches = user?.branches || [];
+    const branchId = user?.branch_id;
+
+    // =========================
+    // SUPER ACCESS
+    // =========================
+    const isSuper =
+      role === "super_admin" ||
+      role === "super_inventory_manager" ||
+      branches.includes("ALL");
+
+    const branchIds = branches
+      .filter((b) => b !== "ALL")
+      .map(Number)
+      .filter(Boolean);
+
+    let whereClause = "";
+    const replacements = {};
+
+    // =========================
+    // BRANCH FILTER
+    // =========================
+    if (!isSuper) {
+      if (branchId) {
+        whereClause = `WHERE s.branch_id = :branchId`;
+        replacements.branchId = branchId;
+      } else if (branchIds.length) {
+        whereClause = `WHERE s.branch_id = ANY(:branchIds)`;
+        replacements.branchIds = branchIds;
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: "No branch access"
+        });
+      }
+    }
+
+    // =========================
+    // FETCH INVENTORY
+    // =========================
+    const rows = await sequelize.query(
+      `
+      SELECT
+        b.name AS "Branch Name",
+
+        COALESCE(s.item, '') AS "Item Name",
+        COALESCE(s.item_code, '') AS "Item Code",
+        COALESCE(s.category, '') AS "Category",
+        COALESCE(s.sub_category, '') AS "Sub Category",
+        COALESCE(s.brand, '') AS "Brand",
+        COALESCE(s.type, '') AS "Type",
+        COALESCE(s.size, '') AS "Size",
+        COALESCE(s.color, '') AS "Color",
+        COALESCE(s.unit, '') AS "Unit",
+
+        COALESCE(s.quantity, 0) AS "Current Stock",
+        COALESCE(s.rate, 0) AS "Rate",
+        COALESCE(s.value, 0) AS "Total Value",
+
+        COALESCE(s.batch_no, '') AS "Batch No",
+        COALESCE(s.hsn, '') AS "HSN",
+        COALESCE(s.grn, '') AS "GRN",
+        COALESCE(s.po_number, '') AS "PO Number",
+
+        COALESCE(s.status::TEXT, '') AS "Status",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'PURCHASE'
+        ), 0) AS "Stock IN",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'SALE'
+        ), 0) AS "Stock OUT",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'DAMAGE'
+        ), 0) AS "Scrap Quantity",
+
+        COALESCE(s.rack_no, '') AS "Rack No",
+        COALESCE(s.location, '') AS "Location",
+
+        COALESCE(s.min_stock_level, 0) AS "Min Stock Level",
+
+        COALESCE(s.created_at::TEXT, '') AS "Created At"
+
+      FROM stocks s
+
+      LEFT JOIN branches b
+        ON b.id = s.branch_id
+
+      ${whereClause}
+
+      ORDER BY b.name ASC, s.item ASC
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT
+      }
+    );
+
+    // =========================
+    // NO DATA
+    // =========================
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No inventory data found"
+      });
+    }
+
+    // =========================
+    // CSV GENERATE
+    // =========================
+    const headers = Object.keys(rows[0]);
+
+    const escapeCSV = (value) => {
+      if (value === null || value === undefined) return "";
+      return `"${String(value).replace(/"/g, '""')}"`;
+    };
+
+    const csvContent = [
+      headers.join(","),
+
+      ...rows.map((row) =>
+        headers.map((header) => escapeCSV(row[header])).join(",")
+      )
+    ].join("\n");
+
+    // =========================
+    // DOWNLOAD FILE
+    // =========================
+    const fileName = `inventory-report-${Date.now()}.csv`;
+
+    res.status(200);
+
+    res.setHeader(
+      "Content-Type",
+      "text/csv; charset=utf-8"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.end(csvContent, "utf8");
+
+  } catch (error) {
+    console.error("downloadAllBranchInventoryCSV error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error downloading inventory CSV",
+      error: error.message
+    });
+  }
+};
+
+exports.getMyBranchInventory = async (req, res) => {
+  try {
+    const user = req.user;
+
+    const role = user?.role;
+    const branchId = user?.branch_id;
+    const branches = user?.branches || [];
+
+    // =========================
+    // ALLOWED ROLES
+    // =========================
+    const allowedRoles = [
+      "inventory_manager",
+      "branch_inventory_manager",
+      "super_inventory_manager",
+      "super_admin"
+    ];
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied"
+      });
+    }
+
+    // =========================
+    // FINAL BRANCH
+    // =========================
+    let finalBranchId = branchId;
+
+    if (!finalBranchId && branches.length) {
+      finalBranchId = branches[0];
+    }
+
+    if (!finalBranchId && role !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "No branch assigned"
+      });
+    }
+
+    // =========================
+    // FETCH INVENTORY
+    // =========================
+    const rows = await sequelize.query(
+      `
+      SELECT
+        b.name AS "Branch Name",
+
+        COALESCE(s.item, '') AS "Item Name",
+        COALESCE(s.item_code, '') AS "Item Code",
+        COALESCE(s.category, '') AS "Category",
+        COALESCE(s.sub_category, '') AS "Sub Category",
+        COALESCE(s.brand, '') AS "Brand",
+        COALESCE(s.type, '') AS "Type",
+        COALESCE(s.size, '') AS "Size",
+        COALESCE(s.color, '') AS "Color",
+        COALESCE(s.unit, '') AS "Unit",
+
+        COALESCE(s.quantity, 0) AS "Current Stock",
+        COALESCE(s.rate, 0) AS "Rate",
+        COALESCE(s.value, 0) AS "Total Value",
+
+        COALESCE(s.batch_no, '') AS "Batch No",
+        COALESCE(s.hsn, '') AS "HSN",
+        COALESCE(s.grn, '') AS "GRN",
+        COALESCE(s.po_number, '') AS "PO Number",
+
+        COALESCE(s.status::TEXT, '') AS "Status",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'PURCHASE'
+        ), 0) AS "Stock IN",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'SALE'
+        ), 0) AS "Stock OUT",
+
+        COALESCE((
+          SELECT SUM(l.quantity)
+          FROM ledger l
+          WHERE l.stock_id = s.id
+          AND l.type = 'DAMAGE'
+        ), 0) AS "Scrap Quantity",
+
+        COALESCE(s.rack_no, '') AS "Rack No",
+        COALESCE(s.location, '') AS "Location",
+
+        COALESCE(s.min_stock_level, 0) AS "Min Stock Level",
+
+        COALESCE(s.created_at::TEXT, '') AS "Created At"
+
+      FROM stocks s
+
+      LEFT JOIN branches b
+        ON b.id = s.branch_id
+
+      WHERE s.branch_id = :branchId
+
+      ORDER BY s.created_at DESC
+      `,
+      {
+        replacements: {
+          branchId: finalBranchId
+        },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    // =========================
+    // NO DATA
+    // =========================
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No inventory data found"
+      });
+    }
+
+    // =========================
+    // CSV GENERATE
+    // =========================
+    const headers = Object.keys(rows[0]);
+
+    const escapeCSV = (value) => {
+      if (value === null || value === undefined) {
+        return "";
+      }
+
+      return `"${String(value).replace(/"/g, '""')}"`;
+    };
+
+    const csvContent = [
+      headers.join(","),
+
+      ...rows.map((row) =>
+        headers
+          .map((header) => escapeCSV(row[header]))
+          .join(",")
+      )
+    ].join("\n");
+
+    // =========================
+    // FILE DOWNLOAD
+    // =========================
+    const fileName = `branch-inventory-${finalBranchId}-${Date.now()}.csv`;
+
+    res.status(200);
+
+    res.setHeader(
+      "Content-Type",
+      "text/csv; charset=utf-8"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store"
+    );
+
+    return res.end(csvContent, "utf8");
+
+  } catch (error) {
+    console.error("downloadMyBranchInventoryCSV error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error downloading branch inventory CSV",
+      error: error.message
+    });
+  }
+};
