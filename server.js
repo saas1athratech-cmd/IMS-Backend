@@ -52,6 +52,11 @@ app.use("/combine", require("./routes/sql/combineroute"));
 app.use("/system-setting", require("./routes/sql/systemSettingRoutes"));
 app.use("/getcsv", require("./routes/sql/csv"));
 app.use("/profile", require("./routes/sql/profile"));
+app.use('/excel',require("./routes/sql/importRoutes"))
+app.use(
+  "/batch",
+  require("./routes/sql/batch.routes")
+);
 
 // Sentry error handler
 Sentry.setupExpressErrorHandler(app);
@@ -80,8 +85,8 @@ process.on("uncaughtException", (error) => {
 async function startServer() {
   try {
     // MongoDB Connection
-    await mongoose.connect(process.env.MONGO_URL);
-    console.log("✅ MongoDB connected");
+    // await mongoose.connect(process.env.MONGO_URL);
+    // console.log("✅ MongoDB connected");
 
     // PostgreSQL / Sequelize init
     await initDB();
