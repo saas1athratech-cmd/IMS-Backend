@@ -6,7 +6,6 @@ const StockMovement = require("../../../model/SQL_Model/stockmovement");
 const { Branch, Ledger} = require("../../../model/SQL_Model");
 const { ClientLedger, Client } = require("../../../model/SQL_Model");
 const { InventoryBatch } = require("../../../model/SQL_Model");
-const createBatch = require("../../../service.sql/helpers/createBatch");
 // const Stock = require("../../../model/SQL_Model/stock.record");
 // ============================
 // INVENTORY DASHBOARD
@@ -172,6 +171,7 @@ const createBatch = require("../../../service.sql/helpers/createBatch");
 // ============================
 // DASHBOARD CHARTS
 // ============================
+const createBatch = require("../../../service.sql/helpers/createBatch");
 exports.getInventoryDashboardCharts = async (req, res) => {
   try {
 
@@ -448,7 +448,6 @@ exports.getInventoryDashboardCharts = async (req, res) => {
 
   }
 };
-
 
 exports.addStockItem = async (req, res) => {
 
@@ -3128,7 +3127,7 @@ exports.getStateDetailsDashboard = async (req, res) => {
           0
         ) AS "currentStock",
 
-     
+       
         COALESCE(
           mv."stockIn",
           0
@@ -3180,7 +3179,7 @@ exports.getStateDetailsDashboard = async (req, res) => {
 
       ) st ON st.branch_id = b.id
 
-    
+     
       LEFT JOIN (
 
         SELECT 
@@ -3530,11 +3529,10 @@ exports.getBranchDetailsDashboard = async (req, res) => {
             0
           ) AS "totalStockValue",
 
-          COALESCE(
-            SUM(s.quantity),
-            0
-          ) AS "currentStock",
-
+       COALESCE(
+  SUM(s.quantity),
+  0
+) AS "currentStock",
           COUNT(s.id) AS "totalItems"
 
         FROM stocks s
@@ -4109,7 +4107,6 @@ exports.getItemFullDetails = async (req, res) => {
     // ==============================
     // STOCK FETCH
     // ==============================
-
     const stockResult = await sequelize.query(
       `
       SELECT *
@@ -4144,7 +4141,6 @@ exports.getItemFullDetails = async (req, res) => {
     // ==============================
     // MOVEMENTS
     // ==============================
-
     const movementStats = await sequelize.query(
       `
       SELECT
@@ -4163,9 +4159,8 @@ exports.getItemFullDetails = async (req, res) => {
     const stats = movementStats[0];
 
     // ==============================
-    // BATCHES (FIXED)
+    // BATCHES
     // ==============================
-
     let batches = [];
 
     try {
@@ -4186,13 +4181,9 @@ exports.getItemFullDetails = async (req, res) => {
           ib.created_at AS "receivedDate",
           ib.created_at AS "manufacturingDate",
           ib.created_at AS "updatedAt",
-
           s.rate AS "unitPrice",
-
           ib.expiry_date AS "expiryDate",
-
           COALESCE(ib.supplier, 'N/A') AS "supplier"
-
         FROM inventory_batches ib
         LEFT JOIN stocks s ON s.id = ib.stock_id
         WHERE ib.stock_id = :stockId
@@ -4230,35 +4221,30 @@ exports.getItemFullDetails = async (req, res) => {
     }
 
     // ==============================
-    // EXPIRY LOGIC FIXED
+    // UPDATED LOGIC (AGE BASED)
     // ==============================
-
     const now = new Date();
 
     const processedBatches = batches.map((batch) => {
+      const createdAt = batch.receivedDate
+        ? new Date(batch.receivedDate)
+        : new Date();
+
+      const ageInDays = Math.floor(
+        (now - createdAt) / (1000 * 60 * 60 * 24)
+      );
+
       let expiryStatus = "FRESH";
-      let daysLeft = null;
 
-      if (batch.expiryDate) {
-        const expiry = new Date(batch.expiryDate);
-
-        daysLeft = Math.ceil(
-          (expiry - now) / (1000 * 60 * 60 * 24)
-        );
-
-        if (daysLeft <= 0) {
-          expiryStatus = "EXPIRED";
-        } else if (daysLeft <= 7) {
-          expiryStatus = "CRITICAL";
-        } else if (daysLeft <= 30) {
-          expiryStatus = "NEAR_EXPIRY";
-        }
+      // NEW RULE:
+      // 30+ days old + still stock => CRITICAL
+      if (Number(batch.availableQty || 0) > 0 && ageInDays > 30) {
+        expiryStatus = "CRITICAL";
       }
 
       const recentlyUpdated = batch.updatedAt
         ? Math.floor(
-            (now - new Date(batch.updatedAt)) /
-              (1000 * 60 * 60)
+            (now - new Date(batch.updatedAt)) / (1000 * 60 * 60)
           ) <= 24
         : false;
 
@@ -4275,13 +4261,12 @@ exports.getItemFullDetails = async (req, res) => {
           Number(batch.unitPrice || 0),
 
         expiryStatus,
-        daysLeft,
+        ageInDays,
         recentlyUpdated,
 
         updatedHoursAgo: batch.updatedAt
           ? Math.floor(
-              (now - new Date(batch.updatedAt)) /
-                (1000 * 60 * 60)
+              (now - new Date(batch.updatedAt)) / (1000 * 60 * 60)
             )
           : null,
       };
@@ -4290,15 +4275,11 @@ exports.getItemFullDetails = async (req, res) => {
     // ==============================
     // FILTER
     // ==============================
-
     let filteredBatches = processedBatches;
 
     if (filter === "critical") {
       filteredBatches = processedBatches.filter(
-        (b) =>
-          (b.expiryStatus === "CRITICAL" ||
-            b.expiryStatus === "NEAR_EXPIRY") &&
-          Number(b.availableQty) > 0
+        (b) => b.expiryStatus === "CRITICAL" && Number(b.availableQty) > 0
       );
     } else if (filter === "fresh") {
       filteredBatches = processedBatches.filter(
@@ -4313,7 +4294,6 @@ exports.getItemFullDetails = async (req, res) => {
     // ==============================
     // SUMMARY
     // ==============================
-
     const currentStock = Number(stock.quantity);
     const consumed = Number(stats.stock_out);
     const received = Number(stats.stock_in);
@@ -4322,17 +4302,14 @@ exports.getItemFullDetails = async (req, res) => {
       currentStock * Number(stock.rate || 0);
 
     const lowStock =
-      currentStock <=
-      Number(stock.min_stock_level || 0);
+      currentStock <= Number(stock.min_stock_level || 0);
 
     // ==============================
     // RESPONSE
     // ==============================
-
     return res.status(200).json({
       success: true,
       message: "Item full details fetched successfully",
-
       data: {
         summary: {
           currentStock,
@@ -4343,7 +4320,6 @@ exports.getItemFullDetails = async (req, res) => {
           totalMovements: Number(stats.total_movements),
           totalBatches: processedBatches.length,
         },
-
         stock,
         batches: filteredBatches,
       },
@@ -4621,384 +4597,6 @@ exports.exportInventoryCSV = async (req, res) => {
     });
   }
 };
-
-exports.addNewBatchToExistingItem = async (req, res) => {
-
-  const transaction =
-    await sequelize.transaction();
-
-  try {
-
-    const {
-      stock_id,
-
-      received_qty,
-
-      unit_price,
-
-      received_date,
-
-      condition,
-
-      supplier,
-
-      batch_no
-    } = req.body;
-
-    // ==============================
-    // VALIDATION
-    // ==============================
-
-    if (!stock_id) {
-
-      await transaction.rollback();
-
-      return res.status(400).json({
-        success: false,
-        message: "stock_id is required"
-      });
-
-    }
-
-    if (!received_qty) {
-
-      await transaction.rollback();
-
-      return res.status(400).json({
-        success: false,
-        message: "received_qty is required"
-      });
-
-    }
-
-    // ==============================
-    // FIND STOCK
-    // ==============================
-
-    const stock =
-      await Stock.findOne({
-        where: {
-          id: stock_id
-        },
-        transaction
-      });
-
-    if (!stock) {
-
-      await transaction.rollback();
-
-      return res.status(404).json({
-        success: false,
-        message: "Stock item not found"
-      });
-
-    }
-
-    // ==============================
-    // AUTO BATCH NUMBER
-    // ==============================
-
-    let finalBatchNo =
-      batch_no;
-
-    if (!finalBatchNo) {
-
-      const lastBatch =
-        await InventoryBatch.findOne({
-          order: [["id", "DESC"]],
-          transaction
-        });
-
-      const nextId =
-        lastBatch
-          ? lastBatch.id + 1
-          : 1;
-
-      finalBatchNo =
-        `BAT-${new Date().getFullYear()}-${String(nextId).padStart(5, "0")}`;
-
-    }
-
-    // ==============================
-    // CHECK DUPLICATE BATCH
-    // ==============================
-
-    const alreadyBatch =
-      await InventoryBatch.findOne({
-        where: {
-          batch_no:
-            finalBatchNo,
-
-          stock_id:
-            stock.id
-        },
-
-        transaction
-      });
-
-    if (alreadyBatch) {
-
-      await transaction.rollback();
-
-      return res.status(400).json({
-        success: false,
-        message:
-          "Batch number already exists"
-      });
-
-    }
-
-    // ==============================
-    // CREATE NEW BATCH
-    // ==============================
-
-    const newBatch =
-      await InventoryBatch.create(
-        {
-
-          batch_no:
-            finalBatchNo,
-
-          stock_id:
-            stock.id,
-
-          parent_batch_id:
-            null,
-
-          branch_id:
-            stock.branch_id,
-
-          total_bundle:
-            Number(received_qty),
-
-          available_bundle:
-            Number(received_qty),
-
-          bundle_size:
-            stock.bundle_size,
-
-          item_name:
-            stock.item,
-
-          status:
-            condition || "ACTIVE",
-
-          supplier:
-            supplier || "N/A",
-
-          created_at:
-            received_date || new Date()
-        },
-        { transaction }
-      );
-
-    // ==============================
-    // UPDATE MAIN STOCK
-    // ==============================
-
-    stock.quantity =
-      Number(stock.quantity || 0) +
-      Number(received_qty);
-
-    if (unit_price) {
-
-      stock.rate =
-        Number(unit_price);
-
-    }
-
-    stock.value =
-      Number(stock.quantity) *
-      Number(stock.rate || 0);
-
-    await stock.save({
-      transaction
-    });
-
-    // ==============================
-    // STOCK MOVEMENT
-    // ==============================
-
-    await StockMovement.create(
-      {
-
-        stock_id:
-          stock.id,
-
-        branch_id:
-          stock.branch_id,
-
-        type:
-          "IN",
-
-        quantity:
-          Number(received_qty)
-
-      },
-      { transaction }
-    );
-
-    // ==============================
-    // GET UPDATED BATCHES
-    // ==============================
-
-    const allBatches =
-      await InventoryBatch.findAll({
-        where: {
-          stock_id:
-            stock.id
-        },
-
-        order: [
-          ["id", "DESC"]
-        ],
-
-        transaction
-      });
-
-    // ==============================
-    // COMMIT
-    // ==============================
-
-    await transaction.commit();
-
-    // ==============================
-    // RESPONSE
-    // ==============================
-
-    return res.status(201).json({
-      success: true,
-
-      message:
-        "New batch added successfully",
-
-      data: {
-
-        stock: {
-
-          id:
-            stock.id,
-
-          item:
-            stock.item,
-
-          quantity:
-            Number(stock.quantity),
-
-          rate:
-            Number(stock.rate),
-
-          value:
-            Number(stock.value),
-
-          branch_id:
-            stock.branch_id
-        },
-
-        new_batch: {
-
-          id:
-            newBatch.id,
-
-          batch_no:
-            newBatch.batch_no,
-
-          qty:
-            Number(
-              newBatch.available_bundle
-            ),
-
-          total_bundle:
-            Number(
-              newBatch.total_bundle
-            ),
-
-          available_bundle:
-            Number(
-              newBatch.available_bundle
-            ),
-
-          status:
-            newBatch.status,
-
-          received_date:
-            newBatch.created_at
-        },
-
-        batches:
-          allBatches.map((batch) => ({
-
-            id:
-              batch.id,
-
-            batch_no:
-              batch.batch_no,
-
-            qty:
-              Number(
-                batch.available_bundle || 0
-              ),
-
-            total_bundle:
-              Number(
-                batch.total_bundle || 0
-              ),
-
-            available_bundle:
-              Number(
-                batch.available_bundle || 0
-              ),
-
-            consumed_bundle:
-              Number(
-                batch.total_bundle || 0
-              ) -
-              Number(
-                batch.available_bundle || 0
-              ),
-
-            bundle_size:
-              batch.bundle_size,
-
-            item_name:
-              batch.item_name,
-
-            status:
-              batch.status,
-
-            received_date:
-              batch.created_at
-          }))
-      }
-    });
-
-  } catch (err) {
-
-    if (
-      transaction &&
-      !transaction.finished
-    ) {
-
-      await transaction.rollback();
-
-    }
-
-    console.error(
-      "ADD NEW BATCH ERROR:",
-      err
-    );
-
-    return res.status(500).json({
-      success: false,
-      message:
-        err.message ||
-        "Internal server error"
-    });
-
-  }
-};
-
-
 
 exports.downloadAllBranchInventoryCSV = async (req, res) => {
   try {
@@ -5353,6 +4951,289 @@ exports.getMyBranchInventory = async (req, res) => {
       success: false,
       message: "Error downloading branch inventory CSV",
       error: error.message
+    });
+  }
+};
+
+
+
+// ==============================
+// ADD NEW BATCH TO EXISTING ITEM
+// ==============================
+
+// ==============================
+// ADD NEW BATCH TO EXISTING ITEM
+// ==============================
+
+// ==============================
+// ADD NEW BATCH TO EXISTING ITEM
+// ==============================
+
+exports.addNewBatchToExistingItem = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const {
+      stock_id,
+      received_qty,
+      unit_price,
+      received_date,
+      condition,
+      supplier,
+      batch_no,
+      expiry_date,
+    } = req.body;
+
+    // ==============================
+    // VALIDATION
+    // ==============================
+
+    if (!stock_id) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "stock_id is required",
+      });
+    }
+
+    if (!received_qty || Number(received_qty) <= 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Valid received_qty is required",
+      });
+    }
+
+    // ==============================
+    // FIND STOCK
+    // ==============================
+
+    const stock = await Stock.findOne({
+      where: { id: stock_id },
+      transaction,
+    });
+
+    if (!stock) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Stock item not found",
+      });
+    }
+
+    // ==============================
+    // SUPPLIER FIX
+    // ==============================
+
+    const supplierName =
+      supplier && String(supplier).trim() !== ""
+        ? String(supplier).trim()
+        : "N/A";
+
+    // ==============================
+    // AUTO BATCH NO
+    // ==============================
+
+    let finalBatchNo = batch_no;
+
+    if (!finalBatchNo || String(finalBatchNo).trim() === "") {
+      const lastBatch = await InventoryBatch.findOne({
+        order: [["id", "DESC"]],
+        transaction,
+      });
+
+      const nextId = lastBatch ? lastBatch.id + 1 : 1;
+
+      finalBatchNo = `BAT-${new Date().getFullYear()}-${String(
+        nextId
+      ).padStart(5, "0")}`;
+    }
+
+    // ==============================
+    // CHECK EXISTING BATCH
+    // ==============================
+
+    let existingBatch = await InventoryBatch.findOne({
+      where: {
+        batch_no: finalBatchNo,
+        stock_id: stock.id,
+      },
+      transaction,
+    });
+
+    let batchResponse;
+
+    // ==============================
+    // UPDATE BATCH
+    // ==============================
+
+    if (existingBatch) {
+      existingBatch.total_bundle =
+        Number(existingBatch.total_bundle || 0) + Number(received_qty);
+
+      existingBatch.available_bundle =
+        Number(existingBatch.available_bundle || 0) + Number(received_qty);
+
+      existingBatch.status = condition || existingBatch.status || "ACTIVE";
+
+      // supplier update
+      existingBatch.supplier = supplierName;
+
+      // expiry update (only if passed)
+      if (expiry_date) {
+        existingBatch.expiry_date = expiry_date;
+      }
+
+      if (received_date) {
+        existingBatch.created_at = received_date;
+      }
+
+      await existingBatch.save({ transaction });
+
+      batchResponse = existingBatch;
+    }
+
+    // ==============================
+    // CREATE BATCH
+    // ==============================
+
+    else {
+      batchResponse = await InventoryBatch.create(
+        {
+          batch_no: finalBatchNo,
+          stock_id: stock.id,
+          parent_batch_id: null,
+          branch_id: stock.branch_id,
+
+          total_bundle: Number(received_qty),
+          available_bundle: Number(received_qty),
+
+          bundle_size: stock.bundle_size,
+          item_name: stock.item,
+
+          status: condition || "ACTIVE",
+
+          supplier: supplierName,
+
+          expiry_date: expiry_date || null,
+
+          created_at: received_date || new Date(),
+        },
+        { transaction }
+      );
+    }
+
+    // ==============================
+    // UPDATE STOCK
+    // ==============================
+
+    stock.quantity =
+      Number(stock.quantity || 0) + Number(received_qty);
+
+    if (unit_price !== undefined && unit_price !== null) {
+      stock.rate = Number(unit_price);
+    }
+
+    stock.value =
+      Number(stock.quantity || 0) * Number(stock.rate || 0);
+
+    await stock.save({ transaction });
+
+    // ==============================
+    // STOCK MOVEMENT
+    // ==============================
+
+    await StockMovement.create(
+      {
+        stock_id: stock.id,
+        branch_id: stock.branch_id,
+        batch_id: batchResponse.id,
+        type: "IN",
+        quantity: Number(received_qty),
+      },
+      { transaction }
+    );
+
+    // ==============================
+    // GET ALL BATCHES
+    // ==============================
+
+    const allBatches = await InventoryBatch.findAll({
+      where: { stock_id: stock.id },
+      order: [["id", "DESC"]],
+      transaction,
+    });
+
+    await transaction.commit();
+
+    // ==============================
+    // RESPONSE
+    // ==============================
+
+    return res.status(existingBatch ? 200 : 201).json({
+      success: true,
+      message: existingBatch
+        ? "Existing batch updated successfully"
+        : "New batch added successfully",
+
+      data: {
+        stock: {
+          id: stock.id,
+          item: stock.item,
+          quantity: Number(stock.quantity),
+          rate: Number(stock.rate),
+          value: Number(stock.value),
+          branch_id: stock.branch_id,
+        },
+
+        batch: {
+          id: batchResponse.id,
+          batch_no: batchResponse.batch_no,
+          total_bundle: Number(batchResponse.total_bundle),
+          available_bundle: Number(batchResponse.available_bundle),
+
+          consumed_bundle:
+            Number(batchResponse.total_bundle || 0) -
+            Number(batchResponse.available_bundle || 0),
+
+          bundle_size: batchResponse.bundle_size,
+          item_name: batchResponse.item_name,
+          status: batchResponse.status,
+          received_date: batchResponse.created_at,
+
+          supplier: batchResponse.supplier || "N/A",
+          expiry_date: batchResponse.expiry_date || null,
+        },
+
+        batches: allBatches.map((b) => ({
+          id: b.id,
+          batch_no: b.batch_no,
+          total_bundle: Number(b.total_bundle || 0),
+          available_bundle: Number(b.available_bundle || 0),
+
+          consumed_bundle:
+            Number(b.total_bundle || 0) -
+            Number(b.available_bundle || 0),
+
+          bundle_size: b.bundle_size,
+          item_name: b.item_name,
+          status: b.status,
+          received_date: b.created_at,
+
+          supplier: b.supplier || "N/A",
+          expiry_date: b.expiry_date || null,
+        })),
+      },
+    });
+
+  } catch (err) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Internal server error",
     });
   }
 };

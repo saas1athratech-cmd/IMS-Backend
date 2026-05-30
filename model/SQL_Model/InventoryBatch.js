@@ -1,3 +1,4 @@
+
 const { DataTypes } = require("sequelize");
 const sequelize = require("../../config/sqlcon");
 
@@ -12,10 +13,12 @@ const InventoryBatch = sequelize.define(
 
     batch_no: {
       type: DataTypes.STRING,
+      allowNull: false,
     },
 
     stock_id: {
       type: DataTypes.INTEGER,
+      allowNull: true,
     },
 
     parent_batch_id: {
@@ -25,6 +28,7 @@ const InventoryBatch = sequelize.define(
 
     branch_id: {
       type: DataTypes.INTEGER,
+      allowNull: true,
     },
 
     total_bundle: {
@@ -37,9 +41,9 @@ const InventoryBatch = sequelize.define(
       defaultValue: 0,
     },
 
-bundle_size: {
-  type: DataTypes.STRING
-},
+    bundle_size: {
+      type: DataTypes.STRING,
+    },
 
     item_name: {
       type: DataTypes.STRING,
@@ -49,6 +53,28 @@ bundle_size: {
       type: DataTypes.STRING,
       defaultValue: "ACTIVE",
     },
+
+    // =====================================
+    // SUPPLIER ID
+    // =====================================
+
+    supplier_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+supplier: {
+  type: DataTypes.STRING,
+  allowNull: true,
+},
+expiry_date: {
+  type: DataTypes.DATE,
+  allowNull: true,
+},
+    created_at: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW,
+    },
+
   },
   {
     tableName: "inventory_batches",
@@ -57,3 +83,4 @@ bundle_size: {
 );
 
 module.exports = InventoryBatch;
+

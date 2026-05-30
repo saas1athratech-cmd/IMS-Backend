@@ -757,20 +757,58 @@ exports.resetPasswordWithOTP = async (req, res) => {
 // =========================
 // MY NOTIFICATIONS
 // =========================
+function timeAgo(date) {
+
+  const now = new Date();
+  const past = new Date(date);
+
+  const diff = Math.floor((now - past) / 1000); // seconds
+
+  if (diff < 60) return `${diff} sec ago`;
+
+  const min = Math.floor(diff / 60);
+  if (min < 60) return `${min} min ago`;
+
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+
+  const days = Math.floor(hr / 24);
+  if (days < 30) return `${days} day ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month ago`;
+
+  const years = Math.floor(months / 12);
+  return `${years} year ago`;
+}
 exports.getMyNotifications = async (req, res) => {
+
   try {
+
     const notifications = await Notification.findAll({
       where: { user_id: req.user.id },
       order: [["created_at", "DESC"]],
       limit: 20
     });
 
+    const formatted = notifications.map(n => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      created_at: n.created_at,
+      time_ago: timeAgo(n.created_at)   // 🔥 added
+    }));
+
     return res.status(200).json({
       success: true,
-      data: notifications
+      data: formatted
     });
+
   } catch (error) {
+
     console.error("getMyNotifications error:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to fetch notifications",

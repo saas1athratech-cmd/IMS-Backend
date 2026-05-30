@@ -18,7 +18,7 @@ router.post("/reset-password", authController.resetPasswordWithOTP);
 router.get("/notifications", auth,checkRole(["super_admin","admin","inventory_manager"]), authController.getMyNotifications);
 router.patch(
   "/notifications/:id/read",
- auth,checkRole(["super_admin","admin"]),
+ auth,checkRole(["super_admin","admin","inventory_manager"]),
   authController.markNotificationRead
 );
 

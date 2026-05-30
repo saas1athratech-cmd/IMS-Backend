@@ -72,6 +72,10 @@ const Invoice = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true
     },
+    bank_account_id: {
+  type: DataTypes.INTEGER,
+  allowNull: true,
+},
 
     qr_code: {
       type: DataTypes.TEXT,

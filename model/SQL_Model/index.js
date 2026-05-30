@@ -25,8 +25,9 @@ const SecurityActivity = require("./securityactivity");
 
 // ✅ USE THIS ONLY
 const InventoryBatch = require("./InventoryBatch");
-
-
+const DeliveryChallan = require("./deliveryChallan")(sequelize);
+const DeliveryChallanItem = require("./deliveryChallanitems")(sequelize)
+const BranchBankAccount = require("./BranchBankAccount");
 // =====================================================
 // USER
 // =====================================================
@@ -394,8 +395,74 @@ SystemSetting.belongsTo(User, {
   foreignKey: "updated_by",
   as: "updater",
 });
+// =====================================================
+// DELIVERY CHALLAN
+// =====================================================
+
+Client.hasMany(DeliveryChallan, {
+  foreignKey: "client_id",
+  as: "deliveryChallans",
+});
+
+DeliveryChallan.belongsTo(Client, {
+  foreignKey: "client_id",
+  as: "client",
+});
+
+Quotation.hasMany(DeliveryChallan, {
+  foreignKey: "quotation_id",
+  as: "deliveryChallans",
+});
+
+DeliveryChallan.belongsTo(Quotation, {
+  foreignKey: "quotation_id",
+  as: "quotation",
+});
+
+Branch.hasMany(DeliveryChallan, {
+  foreignKey: "from_branch_id",
+  as: "outgoingDC",
+});
+
+DeliveryChallan.belongsTo(Branch, {
+  foreignKey: "from_branch_id",
+  as: "fromBranch",
+});
+
+Branch.hasMany(DeliveryChallan, {
+  foreignKey: "to_branch_id",
+  as: "incomingDC",
+});
+
+DeliveryChallan.belongsTo(Branch, {
+  foreignKey: "to_branch_id",
+  as: "toBranch",
+});
 
 
+// =====================================================
+// DELIVERY CHALLAN ITEMS
+// =====================================================
+
+DeliveryChallan.hasMany(DeliveryChallanItem, {
+  foreignKey: "dc_id",
+  as: "items",
+});
+
+DeliveryChallanItem.belongsTo(DeliveryChallan, {
+  foreignKey: "dc_id",
+  as: "deliveryChallan",
+});
+
+Branch.hasMany(BranchBankAccount, {
+  foreignKey: "branch_id",
+  as: "bank_accounts",
+});
+
+BranchBankAccount.belongsTo(Branch, {
+  foreignKey: "branch_id",
+  as: "branch",
+});
 // =====================================================
 // SECURITY ACTIVITY
 // =====================================================
@@ -455,6 +522,8 @@ const initDB = async () => {
 
       await InvoiceItem.sync();
 
+      await DeliveryChallan.sync();
+await DeliveryChallanItem.sync();
       await BatchTimeline.sync();
 
       await Notification.sync();
@@ -544,7 +613,9 @@ module.exports = {
 
   Invoice,
   InvoiceItem,
+DeliveryChallan,
 
+DeliveryChallanItem,
   BatchTimeline,
 
   Notification,

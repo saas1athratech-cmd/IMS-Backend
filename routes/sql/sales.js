@@ -49,6 +49,11 @@ router.get('/getstate',auth, checkRole(["admin","sales_manager","super_sales_man
 router.get('/getstate/:state',auth, checkRole(["admin","sales_manager","super_sales_manager","inventory_manager"]),salemanager.getStateDashboard)
 router.get('/branch/:branchId',auth, checkRole(["admin","sales_manager","super_sales_manager","inventory_manager"]),salemanager.getBranchDashboard)
 router.get('/dashboard/item/:itemId',auth, checkRole(["admin","sales_manager","super_sales_manager"]),salemanager.getItemDashboard )
-router.get('/invoice/:invoice_no',auth, checkRole(["admin","sales_manager","super_sales_manager","inventory_manager"]),salemanager.getInvoicePDF )
+router.get('/invoice/:invoice_no',auth, checkRole(["admin","sales_manager","super_sales_manager","inventory_manager","super_inventory_manager"]),salemanager.getInvoicePDF )
 
+router.post(
+  "/branch-transfer",
+  auth,
+  salemanager.createBranchTransfer
+);
 module.exports=router;

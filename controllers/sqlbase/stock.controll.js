@@ -1,28 +1,149 @@
 const { Stock, User } = require("../../model/SQL_Model");
+const sequelize = require("../../config/sqlcon");
 
+
+const createBatch =
+  require("../../service.sql/helpers/createBatch");
+
+const createMovement =
+  require("../../service.sql/helpers/createMovement");
 const CHUNK_SIZE = 500; 
-exports.createStock = async (req, res) => {
-  try {
-    const { branch, item, quantity, rate } = req.body;
 
-    if (!branch || !item || quantity == null || rate == null) {
-      return res.status(400).json({ error: "All fields required" });
+
+exports.createStock = async (req, res) => {
+
+  const transaction =
+    await sequelize.transaction();
+
+  try {
+
+    const {
+      branch_id,
+      item,
+      quantity,
+      rate,
+
+      batch_no,
+      total_bundle,
+      bundle_size,
+    } = req.body;
+
+    if (
+      !branch_id ||
+      !item ||
+      quantity == null ||
+      rate == null
+    ) {
+
+      return res.status(400).json({
+        error: "All fields required",
+      });
     }
 
-    const stock = await Stock.create({
-      branch,
-      item,
-      quantity: Number(quantity),
-      rate: Number(rate),
-      owner_id: req.user.id, 
-    });
+    // ===================================
+    // CREATE STOCK
+    // ===================================
+
+    const stock = await Stock.create(
+      {
+        branch_id,
+
+        item,
+
+        quantity:
+          Number(quantity),
+
+        rate:
+          Number(rate),
+
+        owner_id:
+          req.user.id,
+      },
+      { transaction }
+    );
+
+    // ===================================
+    // CREATE ROOT BATCH
+    // ===================================
+
+    let batch = null;
+
+    if (
+      batch_no &&
+      total_bundle &&
+      bundle_size
+    ) {
+
+      batch =
+        await createBatch({
+          batch_no,
+
+          stock_id:
+            stock.id,
+
+          branch_id,
+
+          total_bundle,
+
+          available_bundle:
+            total_bundle,
+
+          bundle_size,
+
+          item_name:
+            item,
+
+          transaction,
+        });
+
+      // ===================================
+      // MOVEMENT ENTRY
+      // ===================================
+
+      await createMovement({
+        stock_id:
+          stock.id,
+
+        batch_id:
+          batch.id,
+
+        branch_id,
+
+        type: "IN",
+
+        quantity,
+
+        bundle_quantity:
+          total_bundle,
+
+        remarks:
+          "Initial Stock Purchase",
+
+        created_by:
+          req.user.id,
+
+        transaction,
+      });
+    }
+
+    await transaction.commit();
 
     res.status(201).json({
-      message: "Stock created successfully",
+      message:
+        "Stock created successfully",
+
       stock,
+
+      batch,
     });
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    await transaction.rollback();
+
+    res.status(500).json({
+      error: err.message,
+    });
   }
 };
 
@@ -59,52 +180,151 @@ exports.getAllStock = async (req, res) => {
 };
 
 // this is for to the 
+
 exports.bulkCreateStock = async (req, res) => {
-  try {
-    const { branch, items } = req.body;
 
-    if (!branch || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Branch & items required" });
-    }
+    const transaction =
+      await sequelize.transaction();
 
-    
-    const payload = items.map((i, idx) => {
-      if (!i.item || i.quantity == null || i.rate == null) {
-        throw new Error(`Invalid data at index ${idx}`);
+    try {
+
+      const {
+        branch_id,
+        items,
+      } = req.body;
+
+      if (
+        !branch_id ||
+        !Array.isArray(items) ||
+        items.length === 0
+      ) {
+
+        return res.status(400).json({
+          error:
+            "Branch & items required",
+        });
       }
 
-      return {
-        branch,
-        item: i.item,
-        quantity: Number(i.quantity),
-        rate: Number(i.rate),
-        owner_id: req.user.id,
-      };
-    });
+      const insertedStocks = [];
 
-    let inserted = 0;
+      for (const i of items) {
 
-    // 🔥 chunked bulk insert WITH hooks
-    for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
-      const chunk = payload.slice(i, i + CHUNK_SIZE);
+        // ==========================
+        // CREATE STOCK
+        // ==========================
 
-      await Stock.bulkCreate(chunk, {
-        individualHooks: true, // ✅ VERY IMPORTANT
+        const stock =
+          await Stock.create(
+            {
+              branch_id,
+
+              item: i.item,
+
+              quantity:
+                Number(i.quantity),
+
+              rate:
+                Number(i.rate),
+
+              owner_id:
+                req.user.id,
+            },
+            { transaction }
+          );
+
+        insertedStocks.push(stock);
+
+        // ==========================
+        // CREATE ROOT BATCH
+        // ==========================
+
+        if (
+          i.batch_no &&
+          i.total_bundle &&
+          i.bundle_size
+        ) {
+
+          const batch =
+            await createBatch({
+              batch_no:
+                i.batch_no,
+
+              stock_id:
+                stock.id,
+
+              branch_id,
+
+              total_bundle:
+                i.total_bundle,
+
+              available_bundle:
+                i.total_bundle,
+
+              bundle_size:
+                i.bundle_size,
+
+              item_name:
+                i.item,
+
+              transaction,
+            });
+
+          // ==========================
+          // CREATE MOVEMENT
+          // ==========================
+
+          await createMovement({
+            stock_id:
+              stock.id,
+
+            batch_id:
+              batch.id,
+
+            branch_id,
+
+            type: "IN",
+
+            quantity:
+              i.quantity,
+
+            bundle_quantity:
+              i.total_bundle,
+
+            remarks:
+              "Bulk Stock Purchase",
+
+            created_by:
+              req.user.id,
+
+            transaction,
+          });
+        }
+      }
+
+      await transaction.commit();
+
+      res.status(201).json({
+        message:
+          "Bulk stock inserted successfully",
+
+        totalInserted:
+          insertedStocks.length,
+
+        data:
+          insertedStocks,
       });
 
-      inserted += chunk.length;
+    } catch (err) {
+
+      await transaction.rollback();
+
+      console.error(err);
+
+      res.status(500).json({
+        error: err.message,
+      });
     }
-
-    res.status(201).json({
-      message: "Bulk stock inserted successfully",
-      totalInserted: inserted,
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-};
+  };
 
 exports.getStockById = async (req, res) => {
   try {

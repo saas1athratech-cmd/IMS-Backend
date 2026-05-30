@@ -1675,6 +1675,7 @@ exports.getReportsAnalytics = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 exports.getItemDashboard = async (req, res) => {
   try {
     const user = req.user;
@@ -1700,7 +1701,9 @@ exports.getItemDashboard = async (req, res) => {
     }
 
     const finalBranchId =
-      user.branches[0] === "ALL" ? requestedBranchId : user.branch_id;
+      user.branches[0] === "ALL"
+        ? requestedBranchId
+        : user.branch_id;
 
     // =========================
     // ITEM FIND
@@ -1786,8 +1789,11 @@ exports.getItemDashboard = async (req, res) => {
       return null;
     };
 
-    const stockMovementDateColumn = await getDateColumn("stock_movements");
-    const ledgerDateColumn = await getDateColumn("ledger");
+    const stockMovementDateColumn =
+      await getDateColumn("stock_movements");
+
+    const ledgerDateColumn =
+      await getDateColumn("ledger");
 
     // =========================
     // STOCK MOVEMENT
@@ -1799,12 +1805,36 @@ exports.getItemDashboard = async (req, res) => {
         `
         SELECT
           TO_CHAR(DATE("${stockMovementDateColumn}"), 'YYYY-MM-DD') AS label,
-          COALESCE(SUM(CASE WHEN type = 'IN' THEN quantity ELSE 0 END), 0) AS stock_in,
-          COALESCE(SUM(CASE WHEN type = 'OUT' THEN quantity ELSE 0 END), 0) AS stock_out
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'IN'
+                THEN quantity
+                ELSE 0
+              END
+            ),
+            0
+          ) AS stock_in,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'OUT'
+                THEN quantity
+                ELSE 0
+              END
+            ),
+            0
+          ) AS stock_out
+
         FROM stock_movements
+
         WHERE branch_id = :branchId
           AND stock_id IN (:stockIds)
+
         GROUP BY DATE("${stockMovementDateColumn}")
+
         ORDER BY DATE("${stockMovementDateColumn}") ASC
         `,
         {
@@ -1816,21 +1846,44 @@ exports.getItemDashboard = async (req, res) => {
         }
       );
     } else {
-      // fallback if no date column
       stockMovement = await sequelize.query(
         `
         SELECT
           'Overall' AS label,
-          COALESCE(SUM(CASE WHEN type = 'IN' THEN quantity ELSE 0 END), 0) AS stock_in,
-          COALESCE(SUM(CASE WHEN type = 'OUT' THEN quantity ELSE 0 END), 0) AS stock_out
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'IN'
+                THEN quantity
+                ELSE 0
+              END
+            ),
+            0
+          ) AS stock_in,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'OUT'
+                THEN quantity
+                ELSE 0
+              END
+            ),
+            0
+          ) AS stock_out
+
         FROM stock_movements
+
         WHERE branch_id = :branchId
           AND stock_id IN (:stockIds)
         `,
         {
           replacements: {
             branchId: finalBranchId,
-            stockIds: stockIds.length ? stockIds : [0],
+            stockIds: stockIds.length
+              ? stockIds
+              : [0],
           },
           type: sequelize.QueryTypes.SELECT,
         }
@@ -1847,11 +1900,35 @@ exports.getItemDashboard = async (req, res) => {
         `
         SELECT
           TO_CHAR(DATE("${ledgerDateColumn}"), 'YYYY-MM-DD') AS label,
-          COALESCE(SUM(CASE WHEN type = 'SALE' THEN total ELSE 0 END), 0) AS revenue,
-          COALESCE(SUM(CASE WHEN type = 'PURCHASE' THEN total ELSE 0 END), 0) AS cost
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'SALE'
+                THEN total
+                ELSE 0
+              END
+            ),
+            0
+          ) AS revenue,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'PURCHASE'
+                THEN total
+                ELSE 0
+              END
+            ),
+            0
+          ) AS cost
+
         FROM ledger
+
         WHERE branch_id = :branchId
+
         GROUP BY DATE("${ledgerDateColumn}")
+
         ORDER BY DATE("${ledgerDateColumn}") ASC
         `,
         {
@@ -1866,9 +1943,31 @@ exports.getItemDashboard = async (req, res) => {
         `
         SELECT
           'Overall' AS label,
-          COALESCE(SUM(CASE WHEN type = 'SALE' THEN total ELSE 0 END), 0) AS revenue,
-          COALESCE(SUM(CASE WHEN type = 'PURCHASE' THEN total ELSE 0 END), 0) AS cost
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'SALE'
+                THEN total
+                ELSE 0
+              END
+            ),
+            0
+          ) AS revenue,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'PURCHASE'
+                THEN total
+                ELSE 0
+              END
+            ),
+            0
+          ) AS cost
+
         FROM ledger
+
         WHERE branch_id = :branchId
         `,
         {
@@ -1884,22 +1983,47 @@ exports.getItemDashboard = async (req, res) => {
     // CONDITION
     // =========================
     const goodCondition = relatedStocks
-      .filter((i) => (i.status || "").toUpperCase() === "GOOD")
-      .reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+      .filter(
+        (i) =>
+          (i.status || "").toUpperCase() === "GOOD"
+      )
+      .reduce(
+        (sum, i) => sum + Number(i.quantity || 0),
+        0
+      );
 
     const scrapDamaged = relatedStocks
       .filter((i) =>
-        ["DAMAGED", "SCRAP"].includes((i.status || "").toUpperCase())
+        ["DAMAGED", "SCRAP"].includes(
+          (i.status || "").toUpperCase()
+        )
       )
-      .reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+      .reduce(
+        (sum, i) => sum + Number(i.quantity || 0),
+        0
+      );
 
     const repairable = relatedStocks
-      .filter((i) => (i.status || "").toUpperCase() === "REPAIRABLE")
-      .reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+      .filter(
+        (i) =>
+          (i.status || "").toUpperCase() ===
+          "REPAIRABLE"
+      )
+      .reduce(
+        (sum, i) => sum + Number(i.quantity || 0),
+        0
+      );
 
     const inTransit = relatedStocks
-      .filter((i) => (i.status || "").toUpperCase() === "IN_TRANSIT")
-      .reduce((sum, i) => sum + Number(i.quantity || 0), 0);
+      .filter(
+        (i) =>
+          (i.status || "").toUpperCase() ===
+          "IN_TRANSIT"
+      )
+      .reduce(
+        (sum, i) => sum + Number(i.quantity || 0),
+        0
+      );
 
     // =========================
     // AGING TABLE
@@ -1907,9 +2031,20 @@ exports.getItemDashboard = async (req, res) => {
     const agingAnalysis = relatedStocks.map((i) => {
       let status = "Good";
 
-      if ((i.status || "").toUpperCase() === "DAMAGED") status = "Damaged";
-      else if ((i.status || "").toUpperCase() === "SCRAP") status = "Damaged";
-      else if ((i.status || "").toUpperCase() === "REPAIRABLE") {
+      if (
+        (i.status || "").toUpperCase() ===
+        "DAMAGED"
+      ) {
+        status = "Damaged";
+      } else if (
+        (i.status || "").toUpperCase() ===
+        "SCRAP"
+      ) {
+        status = "Damaged";
+      } else if (
+        (i.status || "").toUpperCase() ===
+        "REPAIRABLE"
+      ) {
         status = "Repairable";
       } else if (Number(i.aging || 0) > 8) {
         status = "Damaged";
@@ -1927,42 +2062,141 @@ exports.getItemDashboard = async (req, res) => {
       };
     });
 
-    const branchInfo = await Branch.findByPk(finalBranchId);
+    const branchInfo =
+      await Branch.findByPk(finalBranchId);
 
     return res.json({
       branchUsed: finalBranchId,
+
       branchInfo,
+
       debug: {
         stockMovementDateColumn,
         ledgerDateColumn,
       },
+
+      // =========================
+      // UPDATED ITEM INFO
+      // =========================
       itemInfo: {
         id: stockItem.id,
+
         name: stockItem.item,
-        category: stockItem.category,
-        hsn: stockItem.hsn,
-        grn: stockItem.grn,
+
+        itemDescription:
+          stockItem.item_description || null,
+
+        itemCode:
+          stockItem.item_code || null,
+
+        sku:
+          stockItem.sku || null,
+
+        category:
+          stockItem.category || null,
+
+        subCategory:
+          stockItem.sub_category || null,
+
+        brand:
+          stockItem.brand || null,
+
+        type:
+          stockItem.type || null,
+
+        size:
+          stockItem.size || null,
+
+        color:
+          stockItem.color || null,
+
+        bundleSize:
+          stockItem.bundle_size || null,
+
+        specification:
+          stockItem.specification || {},
+
+        unit:
+          stockItem.unit || null,
+
+        quantity:
+          Number(stockItem.quantity || 0),
+
+        rate:
+          Number(stockItem.rate || 0),
+
+        value:
+          Number(stockItem.value || 0),
+
+        gstPercent:
+          Number(stockItem.gst_percent || 0),
+
+        hsn:
+          stockItem.hsn || null,
+
+        grn:
+          stockItem.grn || null,
+
+        batchNo:
+          stockItem.batch_no || null,
+
+        poNumber:
+          stockItem.po_number || null,
+
+        rackNo:
+          stockItem.rack_no || null,
+
+        location:
+          stockItem.location || null,
+
+        aging:
+          Number(stockItem.aging || 0),
+
+        status:
+          stockItem.status || null,
+
+        minStockLevel:
+          Number(
+            stockItem.min_stock_level || 0
+          ),
+
+        ownerId:
+          stockItem.owner_id || null,
+
+        branchId:
+          stockItem.branch_id || null,
+
+        createdAt:
+          stockItem.created_at || null,
+
+        updatedAt:
+          stockItem.updated_at || null,
       },
+
       summaryCards: {
         totalStock,
         totalStockValue,
         totalSales,
         agingItems,
       },
+
       conditionCards: {
         goodCondition,
         scrapDamaged,
         repairable,
         inTransit,
       },
+
       charts: {
         stockMovement,
         revenueCostTrend,
       },
+
       agingAnalysis,
     });
   } catch (err) {
     console.error("ERROR:", err);
+
     return res.status(500).json({
       error: err.message,
     });

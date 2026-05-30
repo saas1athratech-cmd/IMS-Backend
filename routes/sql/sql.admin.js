@@ -4,7 +4,7 @@ const router = express.Router();
 const auth = require("../../middleware/auth");
 const checkRole = require("../../middleware/role");
 const admincontroller = require("../../controllers/sqlbase/admin.controller");
-
+const bankdetail =require("../../controllers/sqlbase/Branch_Bank_details");
 
 router.post("/create-branch",auth,checkRole(["super_admin"]),
   admincontroller.createBranch
@@ -80,4 +80,10 @@ router.put(
  auth,checkRole(['admin','super_admin']),
   admincontroller.toggleBranchStatus
 );
+
+
+router.post("/add-bank",auth,checkRole(['admin','super_admin']),bankdetail.createBranchBankAccount)
+
+router.get('/get-bank-details',auth,checkRole(['admin','inventory_namager','sales_manager']),bankdetail.getAllBranchBankAccounts)
+
 module.exports = router;

@@ -18,7 +18,10 @@ const Client = sequelize.define("Client", {
   email: {
     type: DataTypes.STRING
   },
-
+  po_number: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   address: {
     type: DataTypes.TEXT
   },

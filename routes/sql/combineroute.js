@@ -16,9 +16,9 @@ const {
   getStockAgingDashboard,
   getReportsAnalyticsDashboard,
   getCompleteDashboard,
-  addStockItem,addNewBatchToExistingItem,getMyBranchInventory,
+  addStockItem,downloadAllBranchInventoryCSV,addNewBatchToExistingItem,
 
-  getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock,exportInventoryCSV
+  getMyBranchInventory,getAllStatesDashboard,getStateDetailsDashboard,getBranchDetailsDashboard,getItemFullDetails,getCityBranchDashboard,getClientLedgerByBranch,bulkUploadStock,exportInventoryCSV
 } = require("../../controllers/sqlbase/combine/combinemanager");
 
 const auth = require("../../middleware/auth");
@@ -42,7 +42,12 @@ router.get(
 router.get(
   "/dashboard/inventory",
   auth,
-  checkRole(["stock_manager","inventory_manager","super_inventory_manager"]),
+  checkRole([
+    "stock_manager",
+    "inventory_manager",
+    "super_inventory_manager",
+    "super_admin"
+  ]),
   getInventoryDashboard
 );
 
@@ -204,6 +209,24 @@ router.get('/ledger/client/:clientId',   auth,
   ]), getClientLedgerByBranch);
 
 
+
+  
+  router.get(
+  "/all-branch-inventory",
+ auth,checkRole([
+    "super_stock_manager",
+    "super_admin",
+    "super_sales_manager",
+    "inventory_manager",
+    "super_inventory_manager",
+    
+    "admin",
+    "super_sales_manager"
+  ]),
+  downloadAllBranchInventoryCSV
+);
+
+
 router.get(
   "/my-branch-inventory",auth,
   auth,checkRole([
@@ -218,6 +241,8 @@ router.get(
   ]),
   getMyBranchInventory
 );
+
+
 
 router.post(
   "/add-new-batch",
