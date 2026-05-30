@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const User = require("../../model/SQL_Model/user");
 const cloudinary = require("../../config/cloudanry"); // ✅ FIXED
 const PasswordReset = require("../../model/SQL_Model/passwordreset");
+const Role = require("../../model/SQL_Model/role")
 exports.setProfile = async (req, res) => {
   try {
     const userId = req.user.id;
