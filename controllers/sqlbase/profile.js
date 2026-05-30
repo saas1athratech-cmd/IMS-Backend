@@ -140,9 +140,16 @@ exports.getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // ✅ USER FETCH
+    // ✅ USER WITH ROLE (USING ALIAS)
     const user = await User.findByPk(userId, {
-      attributes: { exclude: ["password"] }
+      attributes: { exclude: ["password"] },
+      include: [
+        {
+          model: Role,
+          as: "role", // 🔥 MUST MATCH ASSOCIATION ALIAS
+          attributes: ["id", "name"]
+        }
+      ]
     });
 
     if (!user) {
@@ -152,25 +159,28 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    // ✅ LAST PASSWORD CHANGE FETCH
     const lastPasswordReset = await PasswordReset.findOne({
       where: {
         user_id: userId,
-        verified_at: {
-          [Op.ne]: null // 🔥 IMPORTANT FIX
-        }
+        verified_at: { [Op.ne]: null }
       },
       order: [["verified_at", "DESC"]]
     });
 
-    // ✅ FINAL RESPONSE
+    const userData = user.toJSON();
+
     return res.status(200).json({
       success: true,
       message: "Profile fetched successfully",
       data: {
-        ...user.toJSON(),
+        ...userData,
 
-        // 🔥 LAST PASSWORD CHANGE FIELD
+        // 🔥 FLATTEN ROLE NAME
+        role: userData.role?.name || null,
+
+        // optional cleanup
+        role_id: undefined,
+
         last_password_change: lastPasswordReset
           ? lastPasswordReset.verified_at
           : null
