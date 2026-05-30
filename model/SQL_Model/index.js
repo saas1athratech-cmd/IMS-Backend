@@ -26,7 +26,7 @@ const SecurityActivity = require("./securityactivity");
 // ✅ USE THIS ONLY
 const InventoryBatch = require("./InventoryBatch");
 const DeliveryChallan = require("./deliveryChallan")(sequelize);
-const DeliveryChallanItem = require("./deliveryChallanitems")(sequelize)
+const DeliveryChallanItem = require("./deliveryChallanItems")(sequelize);
 const BranchBankAccount = require("./BranchBankAccount");
 // =====================================================
 // USER
