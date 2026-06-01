@@ -56,4 +56,6 @@ router.post(
   auth,
   salemanager.createBranchTransfer
 );
+
+router.get('/search-Branche',auth,salemanager.searchBranches);
 module.exports=router;
