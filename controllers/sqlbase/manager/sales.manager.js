@@ -5996,13 +5996,10 @@ console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
 
 exports.searchBranches = async (req, res) => {
   try {
-
     const { q } = req.query;
 
-    // WHERE CONDITION
     let whereCondition = {};
 
-    // Agar search query hai tabhi filter lagao
     if (q && q.trim() !== "") {
       whereCondition.name = {
         [Op.iLike]: `%${q}%`
@@ -6011,12 +6008,6 @@ exports.searchBranches = async (req, res) => {
 
     const branches = await Branch.findAll({
       where: whereCondition,
-      attributes: [
-        "id",
-        "name",
-        "code",
-        "manager_name"
-      ],
       order: [["name", "ASC"]]
     });
 
@@ -6027,13 +6018,14 @@ exports.searchBranches = async (req, res) => {
     });
 
   } catch (err) {
-
     return res.status(500).json({
       success: false,
       error: err.message
     });
   }
 };
+
+
 
 
 
