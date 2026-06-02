@@ -3136,17 +3136,17 @@ exports.approveQuotation = async (req, res) => {
   quotation.is_branch_transfer == 1 ||
   quotation.is_branch_transfer == "1" ||
   quotation.is_branch_transfer === "true";
-      await ClientLedger.create(
-        {
-          client_id: quotation.client_id,
-          branch_id: quotation.branch_id,
-          type: isBranchTransfer ? "TRANSFER" : "SALE",
-          amount: quotation.total_amount,
-          invoice_no: `INV-${quotation.quotation_no}`,
-          remark: "Invoice",
-        },
-        { transaction: t }
-      );
+      // await ClientLedger.create(
+      //   {
+      //     client_id: quotation.client_id,
+      //     branch_id: quotation.branch_id,
+      //     type: isBranchTransfer ? "TRANSFER" : "SALE",
+      //     amount: quotation.total_amount,
+      //     invoice_no: `INV-${quotation.quotation_no}`,
+      //     remark: "Invoice",
+      //   },
+      //   { transaction: t }
+      // );
 
       invoice.status = "final";
       await invoice.save({ transaction: t });
