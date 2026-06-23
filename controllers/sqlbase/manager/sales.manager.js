@@ -154,7 +154,7 @@ async function createInvoiceFromQuotation(quotationId, transaction) {
     invoice.status = "final";
     await invoice.save({ transaction });
 
-    quotation.status = "invoiced";
+    quotation.status = "approved";
     await quotation.save({ transaction });
   }
 
@@ -2556,7 +2556,7 @@ exports.convertQuotationToInvoice = async (req, res) => {
     // =======================
     // 2. STATUS CHECK
     // =======================
-    if (!["approved", "invoiced"].includes(quotation.status)) {
+    if (quotation.status !== "approved" && quotation.status !== "invoiced") {
       await t.rollback();
       return res.status(400).json({
         success: false,
@@ -2831,13 +2831,16 @@ for (const it of items) {
     // =======================
     // 10. FINAL UPDATE
     // =======================
-    invoice.status = "final";
-    await invoice.save({ transaction: t });
+  // =======================
+// 10. FINAL UPDATE
+// =======================
+invoice.status = "final";
+await invoice.save({ transaction: t });
 
-    quotation.status = "invoiced";
-    await quotation.save({ transaction: t });
+quotation.status = "invoiced";
+await quotation.save({ transaction: t });
 
-    await t.commit();
+await t.commit();
 
     // =======================
     // RESPONSE
