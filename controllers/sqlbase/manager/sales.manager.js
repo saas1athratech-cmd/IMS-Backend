@@ -717,58 +717,15 @@ exports.createQuotation = async (req, res) => {
       });
 
       // ===== ONLY UPDATE IF STOCK EXISTS =====
-      if (stock) {
+     // ONLY VALIDATE STOCK
+if (!stock) {
+  await t.rollback();
 
-        const oldQty =
-          Number(stock.quantity || 0);
-
-        const requestedQty =
-          Number(p.quantity || 0);
-
-        stock.quantity = Math.max(
-          0,
-          oldQty - requestedQty
-        );
-
-        await stock.save({
-          transaction: t
-        });
-
-        // ===== INVENTORY BATCH =====
-        await InventoryBatch.create(
-          {
-            batch_no:
-              `BATCH-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-
-            stock_id: stock.id,
-
-            branch_id,
-
-            total_bundle: requestedQty,
-
-            available_bundle: Math.max(
-              0,
-              oldQty - requestedQty
-            ),
-
-            bundle_size:
-              p.unit || null,
-
-            item_name:
-              p.product_name,
-
-            status:
-              hasLowStock
-                ? "LOW_STOCK"
-                : is_branch_transfer
-                  ? "TRANSFER"
-                  : "ACTIVE"
-          },
-          {
-            transaction: t
-          }
-        );
-      }
+  return res.status(400).json({
+    success: false,
+    error: `Stock not found: ${p.product_name}`
+  });
+}
 
       // ===== QUOTATION ITEM =====
       await QuotationItem.create(
@@ -2757,6 +2714,9 @@ console.log("BRANCH => ", branch);
    // =======================
 // 9. ITEMS + STOCK + LEDGER (SAFE ORDER)
 // =======================
+// =======================
+// 9. ITEMS + STOCK + LEDGER (SAFE ORDER)
+// =======================
 for (const it of items) {
   await InvoiceItem.create(
     {
@@ -2782,7 +2742,7 @@ for (const it of items) {
   });
 
   // ==========================
-  // FIND AVAILABLE BATCHES (FIFO)
+  // FIND AVAILABLE BATCHES (FIFO LOGIC KEPT AS-IS)
   // ==========================
   let remainingQty = Number(it.quantity);
 
@@ -2810,53 +2770,49 @@ for (const it of items) {
     await batch.save({ transaction: t });
 
     // ==========================
-    // ADD BATCH TIMELINE (NEW ADDITION)
+    // ADD BATCH TIMELINE (UNCHANGED)
     // ==========================
-   await BatchTimeline.create(
-  {
-    stock_id: stock.id,
-    batch_id: batch.id,
+    await BatchTimeline.create(
+      {
+        stock_id: stock.id,
+        batch_id: batch.id,
 
-    event_type: "SALE",
+        event_type: "SALE",
 
-    title: `Invoice ${invoice.invoice_no}`,
+        title: `Invoice ${invoice.invoice_no}`,
 
-    description: JSON.stringify({
-      action: "SALE",
-      invoice_id: invoice.id,
-      invoice_no: invoice.invoice_no,
+        description: JSON.stringify({
+          action: "SALE",
+          invoice_id: invoice.id,
+          invoice_no: invoice.invoice_no,
 
-      item_name: it.product_name,
+          item_name: it.product_name,
+          batch_no: batch.batch_no,
+          qty: deductQty,
 
-      batch_no: batch.batch_no,
+          branch_id: quotation.branch_id,
+          branch_name: branch.name,
 
-      qty: deductQty,
+          client_id: client.id,
+          client_name: client.name,
+        }),
 
-      branch_id: quotation.branch_id,
-      branch_name: branch.name,
+        from_branch_id: quotation.branch_id,
+        to_branch_id: null,
 
-      client_id: client.id,
-      client_name: client.name,
-    }),
+        quantity: deductQty,
+        bundle_quantity: deductQty,
 
-    from_branch_id: quotation.branch_id,
-    to_branch_id: null,
-
-    quantity: deductQty,
-    bundle_quantity: deductQty,
-
-    created_by: req.user?.id || null,
-  },
-  { transaction: t }
-);
+        created_by: req.user?.id || null,
+      },
+      { transaction: t }
+    );
 
     remainingQty -= deductQty;
   }
 
-  stock.quantity =
-    Number(stock.quantity) - Number(it.quantity);
-
-  await stock.save({ transaction: t });
+  // ❌ REMOVED:
+  // stock.quantity deduction (DO NOT USE)
 
   await Ledger.create(
     {
@@ -3097,66 +3053,66 @@ exports.approveQuotation = async (req, res) => {
     // =========================
     // 9. STOCK DEDUCTION (ONLY ONCE)
     // =========================
-    if (invoice.status !== "final") {
-      for (const it of items) {
-        const stock = await Stock.findOne({
-          where: {
-            item: it.product_name,
-            branch_id: quotation.branch_id,
-          },
-          transaction: t,
-          lock: t.LOCK.UPDATE,
-        });
+  //   if (invoice.status !== "final") {
+  //     for (const it of items) {
+  //       const stock = await Stock.findOne({
+  //         where: {
+  //           item: it.product_name,
+  //           branch_id: quotation.branch_id,
+  //         },
+  //         transaction: t,
+  //         lock: t.LOCK.UPDATE,
+  //       });
 
-        if (!stock) {
-          await t.rollback();
-          return res.status(400).json({
-            success: false,
-            error: `Stock not found: ${it.product_name}`,
-          });
-        }
+  //       if (!stock) {
+  //         await t.rollback();
+  //         return res.status(400).json({
+  //           success: false,
+  //           error: `Stock not found: ${it.product_name}`,
+  //         });
+  //       }
 
-        if (Number(stock.quantity) < Number(it.quantity)) {
-          await t.rollback();
-          return res.status(400).json({
-            success: false,
-            error: `Insufficient stock: ${it.product_name}`,
-          });
-        }
+  //       if (Number(stock.quantity) < Number(it.quantity)) {
+  //         await t.rollback();
+  //         return res.status(400).json({
+  //           success: false,
+  //           error: `Insufficient stock: ${it.product_name}`,
+  //         });
+  //       }
 
-        stock.quantity -= Number(it.quantity);
-        await stock.save({ transaction: t });
-      }
+  //       stock.quantity -= Number(it.quantity);
+  //       await stock.save({ transaction: t });
+  //     }
 
-      // =========================
-      // CLIENT LEDGER
-      // =========================
-     const isBranchTransfer =
-  quotation.is_branch_transfer == true ||
-  quotation.is_branch_transfer == 1 ||
-  quotation.is_branch_transfer == "1" ||
-  quotation.is_branch_transfer === "true";
-      // await ClientLedger.create(
-      //   {
-      //     client_id: quotation.client_id,
-      //     branch_id: quotation.branch_id,
-      //     type: isBranchTransfer ? "TRANSFER" : "SALE",
-      //     amount: quotation.total_amount,
-      //     invoice_no: `INV-${quotation.quotation_no}`,
-      //     remark: "Invoice",
-      //   },
-      //   { transaction: t }
-      // );
+  //     // =========================
+  //     // CLIENT LEDGER
+  //     // =========================
+  //    const isBranchTransfer =
+  // quotation.is_branch_transfer == true ||
+  // quotation.is_branch_transfer == 1 ||
+  // quotation.is_branch_transfer == "1" ||
+  // quotation.is_branch_transfer === "true";
+  //     // await ClientLedger.create(
+  //     //   {
+  //     //     client_id: quotation.client_id,
+  //     //     branch_id: quotation.branch_id,
+  //     //     type: isBranchTransfer ? "TRANSFER" : "SALE",
+  //     //     amount: quotation.total_amount,
+  //     //     invoice_no: `INV-${quotation.quotation_no}`,
+  //     //     remark: "Invoice",
+  //     //   },
+  //     //   { transaction: t }
+  //     // );
 
-      invoice.status = "final";
-      await invoice.save({ transaction: t });
+  //     invoice.status = "final";
+  //     await invoice.save({ transaction: t });
 
-      quotation.status = "invoiced";
-      quotation.approved_by = req.user.id;
-      quotation.approved_at = new Date();
+  //     quotation.status = "invoiced";
+  //     quotation.approved_by = req.user.id;
+  //     quotation.approved_at = new Date();
 
-      await quotation.save({ transaction: t });
-    }
+  //     await quotation.save({ transaction: t });
+  //   }
 
     // =========================
     // COMMIT
