@@ -3957,7 +3957,43 @@ exports.getItemFullDetails = async (req, res) => {
         type: QueryTypes.SELECT
       }
     );
+const batchStats = await sequelize.query(
+  `
+  SELECT
+    COALESCE(SUM(ib.total_bundle),0) AS "totalReceived",
 
+    COALESCE(
+      SUM(ib.available_bundle),
+      0
+    ) AS "currentStock",
+
+    COALESCE(
+      SUM(
+        ib.total_bundle - ib.available_bundle
+      ),
+      0
+    ) AS "totalConsumed",
+
+    COUNT(*) AS "totalBatches"
+
+  FROM inventory_batches ib
+
+  INNER JOIN stocks s
+    ON s.id = ib.stock_id
+
+  WHERE s.branch_id = :branchId
+
+  AND LOWER(TRIM(s.item))
+      = LOWER(TRIM(:itemName))
+  `,
+  {
+    replacements: {
+      branchId: requestedBranchId,
+      itemName: itemKey
+    },
+    type: QueryTypes.SELECT
+  }
+);
     // =====================================
     // REST SAME
     // =====================================
